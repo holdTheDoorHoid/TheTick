@@ -45,9 +45,16 @@ jobs:
       - name: AddressSanitizer and UndefinedBehaviorSanitizer
         run: pio test -e native_asan
       - name: ThreadSanitizer
-        # ThreadSanitizer cannot cope with the ASLR layout on recent kernels,
-        # so the binary is built through PlatformIO and run with
-        # randomisation disabled.
+        # Each suite is built and run explicitly. ThreadSanitizer cannot cope
+        # with the ASLR layout on some kernels, so the binary is built through
+        # PlatformIO and then run directly with randomisation disabled - but
+        # the build failure is not swallowed, and every suite is named rather
+        # than relying on whichever binary happened to be built last.
         run: |
-          pio test -e native_tsan || true
-          setarch -R ./.pio/build/native_tsan/program
+          set -euo pipefail
+          for suite in test_capture test_board; do
+            echo "::group::ThreadSanitizer $suite"
+            pio test -e native_tsan -f "$suite" --without-testing
+            setarch -R ./.pio/build/native_tsan/program
+            echo "::endgroup::"
+          done
