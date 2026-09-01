@@ -80,6 +80,21 @@ static void report_threat(const osdp_threat_report *report, void *context) {
   output_debug_string(String("OSDP: ") + osdp_threat_name(report->threat));
 }
 
+// A credential seen in the clear goes through the same path as a Wiegand
+// capture, so it lands in the log and becomes selectable for replay.
+static void report_credential(const osdp_credential *credential, void *context) {
+  (void)context;
+
+  char hex[OSDP_CRED_MAX_BYTES * 2 + 1];
+  for (int i = 0; i < credential->bytes; i++) {
+    hex[i * 2] = c2h((unsigned char)(credential->data[i] >> 4));
+    hex[i * 2 + 1] = c2h((unsigned char)(credential->data[i] & 0x0F));
+  }
+  hex[credential->bytes * 2] = '\0';
+
+  card_read_handler(String(hex) + ":" + String(credential->bits));
+}
+
 static void listen_configure(SPIFFSIniFile &ini, char *buffer,
                              size_t buffer_len) {
   int value = 0;
@@ -93,6 +108,7 @@ static void listen_configure(SPIFFSIniFile &ini, char *buffer,
 
 static bool listen_init(void) {
   osdp_monitor_init(&monitor, report_threat, NULL);
+  osdp_monitor_set_credential_handler(&monitor, report_credential, NULL);
   carry_len = 0;
 
   serial = osdp_listen_begin(baudrate);

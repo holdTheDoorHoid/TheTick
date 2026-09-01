@@ -77,6 +77,16 @@ const FINDING_INFO = {
     means: "The secure channel is being attempted over and over without succeeding, which is what key guessing looks like from the side. It can also be a genuine key mismatch.",
     fix: "Check that the reader and controller hold the same key."
   },
+  credential_replay_accepted: {
+    title: "Replayed badge was accepted",
+    means: "A credential captured from this bus was presented back to the controller by this device, and the controller accepted it - releasing the door output or telling the reader to signal success. A copied badge works here.",
+    fix: "Enable the OSDP secure channel so captured traffic cannot be replayed, and review whether the controller should accept a reader that appears without prior enrolment."
+  },
+  credential_replay_rejected: {
+    title: "Replayed badge reached the controller but was refused",
+    means: "A credential was injected onto the bus and the controller processed it, then refused it. The injection path works even though this particular card was not accepted - a valid one would be.",
+    fix: "Enable the OSDP secure channel. The concern is that unauthenticated messages are being processed at all."
+  },
   sequence_anomaly: {
     title: "Messages arriving out of order",
     means: "A message arrived with an unexpected sequence number, which can indicate injected traffic. It can also be a noisy cable.",
@@ -88,7 +98,13 @@ const FINDING_INFO = {
 // than merely listened. The method statement in the report depends on this,
 // and a report that understates what was done to a client's system is worse
 // than no report.
-const ACTIVE_FINDINGS = ["install_mode_key_disclosed"];
+const ACTIVE_FINDINGS = ["install_mode_key_disclosed",
+                         "credential_replay_accepted",
+                         "credential_replay_rejected"];
+
+// Modes that can transmit. Monitor mode opens its UART without a transmit
+// pin, so replay is not merely disabled in the interface - it is impossible.
+const TRANSMITTING_MODES = ["osdp_pd", "wiegand", "clockanddata"];
 
 const SEVERITY_ORDER = { critical: 4, high: 3, medium: 2, low: 1, info: 0 };
 const SEVERITY_CLASS = {
@@ -345,6 +361,74 @@ function downloadReport() {
   URL.revokeObjectURL(url);
 }
 
+function replay(value) {
+  if (!confirm("Present " + value + " to the controller as if a badge had " +
+               "been swiped?\n\nThis transmits on the client's live access " +
+               "control bus and may unlock a door.")) {
+    return;
+  }
+  $.get("/txid?v=" + encodeURIComponent(value))
+    .done(function () {
+      alert("Sent " + value + ".\n\nWatch the findings table: if the " +
+            "controller accepts it, that appears within a few seconds.");
+      setTimeout(refresh, 1500);
+    })
+    .fail(function (xhr) {
+      alert("Refused: " + xhr.status + " " + xhr.responseText);
+    });
+}
+
+// Captured credentials come from the log, which is where every capture lands
+// regardless of which wire protocol saw it.
+function renderCredentials(data) {
+  const body = $("#credentials_body").empty();
+  const notice = $("#replay_notice").empty();
+
+  const canTransmit = TRANSMITTING_MODES.indexOf(data.mode) !== -1;
+  if (!canTransmit) {
+    notice.append($("<div>").addClass("alert alert-info mb-0")
+      .text("This device is in " + data.mode + " mode, which never transmits. " +
+            "To replay a captured credential, switch the mode to osdp_pd in " +
+            "the configuration and restart."));
+  }
+
+  $.get("/log.txt", function (log) {
+    const rows = [];
+    log.trim().split("\n").forEach(function (line) {
+      const parts = line.split("; ");
+      if (parts.length < 4) return;
+      if (parts[2].indexOf("osdp") !== 0) return;
+      const value = parts[3];
+      if (!/^[0-9a-fA-F]+:[0-9]+$/.test(value)) return;
+      rows.push({ boot: parts[0], ms: parseInt(parts[1], 10), value: value });
+    });
+
+    if (rows.length === 0) {
+      body.append($("<tr>").append(
+        $("<td>").attr("colspan", 4).addClass("text-center text-gray-500")
+          .text("No credentials captured in the clear.")));
+      return;
+    }
+
+    rows.reverse().slice(0, 50).forEach(function (r) {
+      const parts = r.value.split(":");
+      const row = $("<tr>")
+        .append($("<td>").text("boot " + r.boot + ", " + duration(r.ms)))
+        .append($("<td>").append($("<code>").text(parts[0])))
+        .append($("<td>").text(parts[1]));
+
+      const btn = $("<button>").addClass("btn btn-sm btn-danger")
+        .text("Replay").attr("data-value", r.value);
+      if (!canTransmit) btn.prop("disabled", true);
+      row.append($("<td>").append(btn));
+      body.append(row);
+    });
+
+    body.off("click", "button[data-value]").on("click", "button[data-value]",
+      function () { replay($(this).attr("data-value")); });
+  });
+}
+
 function refresh() {
   $.getJSON("/osdp.json", function (data) {
     latest = data;
@@ -355,6 +439,7 @@ function refresh() {
     renderVerdict(data);
     renderFindings(data);
     renderPeers(data);
+    renderCredentials(data);
   });
 }
 

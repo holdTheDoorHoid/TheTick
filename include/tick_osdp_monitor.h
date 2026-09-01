@@ -145,6 +145,25 @@ struct osdp_threat_report {
 typedef void (*osdp_threat_handler)(const osdp_threat_report *report,
                                     void *context);
 
+// Longest card payload OSDP carries, matching the specification's event
+// limit. Defined here rather than taken from libosdp so this file stays free
+// of that dependency.
+#define OSDP_CRED_MAX_BYTES 64
+
+// A credential lifted off the wire in the clear. This is the thing that gets
+// replayed, and the thing a client most wants to see written down.
+struct osdp_credential {
+  uint8_t address;
+  uint8_t reader_no;
+  uint8_t format;
+  uint16_t bits;
+  uint8_t bytes;
+  uint8_t data[OSDP_CRED_MAX_BYTES];
+};
+
+typedef void (*osdp_credential_handler)(const osdp_credential *credential,
+                                        void *context);
+
 struct osdp_monitor {
   osdp_peer_state peers[OSDP_MONITOR_MAX_PEERS];
   uint32_t threat_counts[OSDP_THREAT_COUNT];
@@ -153,6 +172,10 @@ struct osdp_monitor {
   uint32_t frames_bad;
   osdp_threat_handler handler;
   void *handler_context;
+
+  osdp_credential_handler credential_handler;
+  void *credential_context;
+  uint32_t credentials_seen;
 };
 
 void osdp_monitor_init(osdp_monitor *mon, osdp_threat_handler handler,
@@ -170,6 +193,17 @@ size_t osdp_monitor_feed_bytes(osdp_monitor *mon, const uint8_t *buf,
 
 // Clear the "already reported" flags so a fresh assessment can be made,
 // without losing the counts.
+// Called for every credential observed in the clear. Only cleartext reads are
+// reported: an encrypted one cannot be recovered, and pretending otherwise
+// would put a credential in a report that was never actually exposed.
+void osdp_monitor_set_credential_handler(osdp_monitor *mon,
+                                         osdp_credential_handler handler,
+                                         void *context);
+
+// Decode a REPLY_RAW payload. Layout is reader_no, format, bit count low,
+// bit count high, then ceil(bits/8) bytes of card data.
+bool osdp_decode_card_read(const osdp_frame *frame, osdp_credential *out);
+
 void osdp_monitor_rearm(osdp_monitor *mon);
 
 // Look up a tracked peripheral, or null. Used to pull the evidence - a

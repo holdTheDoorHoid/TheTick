@@ -89,6 +89,40 @@ static bool parse_crypto_capability(const osdp_frame *frame, bool *supports) {
   return false;
 }
 
+void osdp_monitor_set_credential_handler(osdp_monitor *mon,
+                                         osdp_credential_handler handler,
+                                         void *context) {
+  if (mon == NULL) return;
+  mon->credential_handler = handler;
+  mon->credential_context = context;
+}
+
+bool osdp_decode_card_read(const osdp_frame *frame, osdp_credential *out) {
+  if (frame == NULL || out == NULL) return false;
+  if (!frame->is_reply || frame->id != OSDP_REPLY_RAW) return false;
+  if (frame->payload_encrypted) return false;
+  if (frame->payload == NULL || frame->payload_len < 4) return false;
+
+  uint16_t bits = (uint16_t)(frame->payload[2] | (frame->payload[3] << 8));
+  uint32_t needed = ((uint32_t)bits + 7) / 8;
+
+  // Trust the declared bit count only as far as the bytes actually present,
+  // and never past our own buffer. This payload came off a wire.
+  uint32_t available = (uint32_t)(frame->payload_len - 4);
+  if (needed > available) needed = available;
+  if (needed > OSDP_CRED_MAX_BYTES) needed = OSDP_CRED_MAX_BYTES;
+  if (needed == 0) return false;
+
+  out->address = frame->address;
+  out->reader_no = frame->payload[0];
+  out->format = frame->payload[1];
+  out->bits = bits;
+  if (out->bits > needed * 8) out->bits = (uint16_t)(needed * 8);
+  out->bytes = (uint8_t)needed;
+  memcpy(out->data, frame->payload + 4, needed);
+  return true;
+}
+
 static bool frame_carries_credential(const osdp_frame *frame) {
   if (!frame->is_reply) return false;
   return frame->id == OSDP_REPLY_RAW || frame->id == OSDP_REPLY_FMT ||
@@ -211,6 +245,16 @@ void osdp_monitor_feed(osdp_monitor *mon, const osdp_frame *frame) {
   if (frame_carries_credential(frame) && !frame->payload_encrypted) {
     peer->cleartext_card_reads++;
     raise(mon, OSDP_THREAT_CLEARTEXT_CARD_READ, frame->address, frame->id);
+
+    // Hand the credential itself out, not just the fact that one went past.
+    // Recovering the number is what turns "this bus is unencrypted" into a
+    // demonstration a client can act on.
+    osdp_credential credential;
+    if (mon->credential_handler != NULL &&
+        osdp_decode_card_read(frame, &credential)) {
+      mon->credentials_seen++;
+      mon->credential_handler(&credential, mon->credential_context);
+    }
   }
 
   // A bus that has been talking for a while with no secure channel in sight
