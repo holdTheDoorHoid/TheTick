@@ -1,4 +1,13 @@
 
+// Escape a value for insertion into HTML. Log lines contain data read off the
+// reader wire and values supplied over HTTP, so nothing from the device is
+// treated as markup.
+function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) {
+        return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+}
+
 function not_tick() {
     $.get("/mugga.txt", function (data) {
         if (data.trim() === "1") {
@@ -12,7 +21,11 @@ function not_tick() {
 function get_editor_files_list() {
     $.get("/list?dir=/", function (data) {
         data.forEach(f => {
-            $(`<a class="collapse-item" href="/editor.html?file=${f.name}">${f.name}</a>`).insertAfter("#config-menu");
+            $("<a>")
+                .addClass("collapse-item")
+                .attr("href", "/editor.html?file=" + encodeURIComponent(f.name))
+                .text(f.name)
+                .insertAfter("#config-menu");
         });
     });
 }
@@ -35,16 +48,26 @@ function get_version_info() {
         if (configuration['features'].indexOf('ota_http') == -1)
             remove_menu_option('update');
 
-        if (configuration['mode'] == 'wiegand')
-            $('#menu_current_mode')[0].innerHTML = "Wiegand";
-        if (configuration['mode'] == 'clockanddata')
-            $('#menu_current_mode')[0].innerHTML = "Clock&amp;Data";
-        if (configuration['mode'] == 'osdp')
-            $('#menu_current_mode')[0].innerHTML = "OSDP";
+        const MODE_LABELS = {
+            'wiegand': 'Wiegand',
+            'clockanddata': 'Clock&Data',
+            'osdp_pd': 'OSDP PD',
+            'osdp_cp': 'OSDP CP',
+            'disabled': 'Disabled'
+        };
+        $('#menu_current_mode').text(MODE_LABELS[configuration['mode']] || configuration['mode']);
 
-        $('#menu_version')[0].innerHTML = configuration['version'];
+        $('#menu_version').text(configuration['version']);
+        $('#menu_board_name').text(configuration['log_name'] + '-' + configuration['ChipID']);
 
-        $('#menu_board_name')[0].innerHTML = configuration['log_name'] + '-' + configuration['ChipID'];
+        // The web interface is only password protected once both a username
+        // and a password are set. Say so rather than letting it look secured.
+        if (configuration['auth'] === false) {
+            $('#auth_warning').remove();
+            $('<div id="auth_warning" class="alert alert-warning m-2" role="alert">')
+                .text('No web password set - this interface is open to anyone who can reach it.')
+                .prependTo('#content');
+        }
 
 
         console.log(data);

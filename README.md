@@ -51,6 +51,71 @@ An ESP32C3, random level converter, RS485 transceiver and a bunch of wires is a 
 
 Firmware of this device started as a simple port of [ESPKey](https://github.com/octosavvi/ESPKey) for ESP32C3, that gradually grew into extensible and multi-protocol software project, with own improved hardware.
 
+### Adding a wire protocol
+
+Every protocol the Tick speaks is one `tick_protocol` struct, declared in its
+own module and listed once in the registry in `src/tick_protocol.cpp`:
+
+```c
+const tick_protocol tick_protocol_wiegand = {
+    .name = "wiegand",          // config value, log facility, /version
+    .short_name = "WGD",        // OLED label
+    .ui_page = "/wiegand.html", // landing page
+    .configure = ...,           // read this module's own settings
+    .init = ...,                // claim GPIO, return false to refuse the mode
+    .attach = ..., .detach = ...,
+    .loop = ...,
+    .tx = ...,                  // called from the main loop only
+    .jam_on = ..., .jam_off = ...,
+};
+```
+
+Every hook is optional. The rest of the firmware reaches the active protocol
+through `tick_current` and the `tick_proto_*` helpers, so nothing outside the
+module and that one registry line needs to change - which is what allows two
+people to add protocols in parallel without colliding.
+
+Protocol settings belong to the module that uses them and are read in its
+`configure()` hook. Only the four pins that are physically shared between
+protocols - the two reader data lines, aux and reset - live in the common
+config.
+
+### Adding a board
+
+`include/tick_board.h` describes a board; `src/tick_board.cpp` holds one entry
+per supported board, selected by a single `-D TICK_BOARD_*` flag. Add an entry
+there and an environment in `platformio.ini`.
+
+Pin numbers from `config.txt` are validated against the chip's real GPIO map
+at boot: flash, PSRAM and USB pins are rejected and the board default is used
+instead. The rules are per chip - the C3 commits 11-17 to flash, the S3
+commits 26-37 to flash and PSRAM - so a config file does not travel safely
+between chips on its own.
+
+### Building and testing
+
+| environment | target |
+|-------------|--------|
+| `ble`       | ESP32-C3, all features, BLE, single app partition |
+| `ota`       | ESP32-C3, all features, HTTP firmware update |
+| `s3`        | ESP32-S3 DevKitC-1 |
+| `minimal`   | ESP32-C3, smallest useful feature set (a build-boundary check) |
+| `native`    | host unit tests |
+| `native_asan` / `native_tsan` | the same tests under sanitizers |
+
+```
+pio run -e ble          # build
+pio test -e native      # unit tests
+pio test -e native_asan # + AddressSanitizer and UndefinedBehaviorSanitizer
+python3 tools/audit_http_auth.py
+```
+
+The host tests run the real capture and board sources rather than copies. The
+central one is differential: the bit formatter is compared against a
+reimplementation of the algorithm it replaced, over every bit length and
+thousands of random patterns, so the on-disk log format and the web UI's
+parsing are provably unchanged.
+
 ### Features
 
 Currently, the firmware can be built with following features:

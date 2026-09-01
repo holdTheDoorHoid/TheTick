@@ -39,10 +39,6 @@
 // not, because their pin assignments cannot be trusted.
 static bool degraded = false;
 
-void detachInterrupts(void) { tick_proto_detach(); }
-
-void attachInterrupts(void) { tick_proto_attach(); }
-
 void output_debug_string(String s) {
   DBG_OUTPUT_PORT.println(s);
   display_temporary_message(s, 5000);
@@ -147,6 +143,14 @@ void setup() {
   // TheTick-config. A config file will take precedence over this.
   bool seen_before = !degraded && SPIFFS.exists(LOG_FILE);
 
+#ifdef USE_WIFI
+  // Seeded before the config files are read so that a configured ssid still
+  // takes precedence, which is what the original comment promised.
+  if (seen_before) {
+    dhcp_hostname.toCharArray(ap_ssid, sizeof(ap_ssid));
+  }
+#endif
+
   if (!degraded) {
     append_log("boot", "Starting up!");
     loadAllConfig();
@@ -155,9 +159,7 @@ void setup() {
   }
 
 #ifdef USE_WIFI
-  if (seen_before) {
-    dhcp_hostname.toCharArray(ap_ssid, sizeof(ap_ssid));
-  }
+  // Never leave the access point nameless.
   if (strlen(ap_ssid) == 0) {
     dhcp_hostname.toCharArray(ap_ssid, sizeof(ap_ssid));
   }
@@ -228,6 +230,7 @@ void loop() {
   // all land here, on this task, one at a time.
   tick_tx_service();
 
+  wifi_loop();
   http_loop();
   ble_loop();
   ota_loop();

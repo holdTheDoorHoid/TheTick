@@ -98,36 +98,75 @@ const tick_board TICK_BOARD = {
 
 // --- pin validation ---------------------------------------------------------
 
-// Pins that exist but must not be repurposed, per chip. GPIO_IS_VALID_GPIO
-// knows which pin numbers the package brings out; it does not know which of
-// them this particular chip family has already committed to flash, PSRAM or
-// USB, so that part is spelled out here.
-static bool pin_is_reserved(int pin) {
-#if CONFIG_IDF_TARGET_ESP32C3
-  // 11..17 are the SPI flash interface. 18/19 are USB D-/D+, which are only
-  // reserved when the USB serial/JTAG peripheral is in use - it always is on
-  // these boards, since the console runs over it.
-  if (pin >= 11 && pin <= 17) return true;
-  if (pin == 18 || pin == 19) return true;
-#elif CONFIG_IDF_TARGET_ESP32S3
-  // 26..32 are SPI flash and PSRAM. 33..37 are additionally taken on modules
-  // with octal PSRAM, which is most of them, so they are treated as reserved
-  // rather than offered as a trap. 19/20 are USB D-/D+.
-  if (pin >= 26 && pin <= 32) return true;
-  if (pin >= 33 && pin <= 37) return true;
-  if (pin == 19 || pin == 20) return true;
-#elif CONFIG_IDF_TARGET_ESP32C5
-  // 24..28 are the SPI flash interface on the C5. 13/14 are USB D-/D+.
-  if (pin >= 24 && pin <= 28) return true;
-  if (pin == 13 || pin == 14) return true;
+tick_chip tick_chip_current(void) {
+#if defined(CONFIG_IDF_TARGET_ESP32C3)
+  return TICK_CHIP_ESP32C3;
+#elif defined(CONFIG_IDF_TARGET_ESP32S3)
+  return TICK_CHIP_ESP32S3;
+#elif defined(CONFIG_IDF_TARGET_ESP32C5)
+  return TICK_CHIP_ESP32C5;
+#else
+  return TICK_CHIP_UNKNOWN;
 #endif
-  return false;
+}
+
+int tick_chip_pin_count(tick_chip chip) {
+  switch (chip) {
+    case TICK_CHIP_ESP32C3:
+      return 22;  // GPIO0..21
+    case TICK_CHIP_ESP32S3:
+      return 49;  // GPIO0..48
+    case TICK_CHIP_ESP32C5:
+      return 29;  // GPIO0..28
+    default:
+      return 0;
+  }
+}
+
+bool tick_pin_reserved_on(tick_chip chip, int pin) {
+  switch (chip) {
+    case TICK_CHIP_ESP32C3:
+      // 11..17 are the SPI flash interface. 18/19 are USB D-/D+, which the
+      // console runs over on every board this firmware targets.
+      if (pin >= 11 && pin <= 17) return true;
+      if (pin == 18 || pin == 19) return true;
+      return false;
+    case TICK_CHIP_ESP32S3:
+      // 26..32 are SPI flash and PSRAM. 33..37 are additionally taken on
+      // modules with octal PSRAM, which is most of them, so they are treated
+      // as reserved rather than left as a trap. 19/20 are USB D-/D+.
+      if (pin >= 26 && pin <= 32) return true;
+      if (pin >= 33 && pin <= 37) return true;
+      if (pin == 19 || pin == 20) return true;
+      return false;
+    case TICK_CHIP_ESP32C5:
+      // 24..28 are the SPI flash interface. 13/14 are USB D-/D+.
+      if (pin >= 24 && pin <= 28) return true;
+      if (pin == 13 || pin == 14) return true;
+      return false;
+    default:
+      return false;
+  }
+}
+
+bool tick_pin_is_adc1_on(tick_chip chip, int pin) {
+  switch (chip) {
+    case TICK_CHIP_ESP32C3:
+      return pin >= 0 && pin <= 4;
+    case TICK_CHIP_ESP32S3:
+      return pin >= 1 && pin <= 10;
+    case TICK_CHIP_ESP32C5:
+      return pin >= 1 && pin <= 6;
+    default:
+      // Unknown chip: do not claim to know, and do not block the operator.
+      return true;
+  }
 }
 
 bool tick_pin_is_valid(int pin) {
   if (pin < 0 || pin >= SOC_GPIO_PIN_COUNT) return false;
   if (!GPIO_IS_VALID_GPIO(pin)) return false;
-  if (pin_is_reserved(pin)) return false;
+  if (tick_pin_reserved_on(tick_chip_current(), pin)) return false;
   return true;
 }
 
@@ -137,17 +176,7 @@ bool tick_pin_is_valid_output(int pin) {
 }
 
 bool tick_pin_is_adc1(int pin) {
-#if CONFIG_IDF_TARGET_ESP32C3
-  return pin >= 0 && pin <= 4;
-#elif CONFIG_IDF_TARGET_ESP32S3
-  return pin >= 1 && pin <= 10;
-#elif CONFIG_IDF_TARGET_ESP32C5
-  return pin >= 1 && pin <= 6;
-#else
-  // Unknown chip: do not claim to know, and do not block the operator.
-  (void)pin;
-  return true;
-#endif
+  return tick_pin_is_adc1_on(tick_chip_current(), pin);
 }
 
 int tick_pin_checked(const char *what, int configured, int fallback,

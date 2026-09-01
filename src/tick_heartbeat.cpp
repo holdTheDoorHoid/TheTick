@@ -17,6 +17,11 @@
 #include <esp32-hal-rgb-led.h>
 #include "tick_heartbeat.h"
 
+// A pulsing LED on a device hidden inside a card reader is a liability, so it
+// is a configured choice rather than a compile-time accident of which board
+// definition happens to declare an RGB LED.
+bool heartbeat_enabled = true;
+
 #ifdef RGB_BUILTIN
 
 struct Color {
@@ -26,16 +31,20 @@ struct Color {
 void heartbeat_init(void) {}
 
 void heartbeat_loop(void) {
+  if (!heartbeat_enabled) return;
+
   constexpr Color colors[] = {
       {32, 49, 84}, {227, 65, 70}, {124, 138, 165}, {69, 94, 124}};
 
   static int currentColorIndex = 0;
   static unsigned long startTime = millis();
-  static unsigned long elapsed = millis();
+  static unsigned long last_step = millis();
 
   unsigned long now = millis();
-  if (elapsed - now > 10) {
-    elapsed = now - startTime;
+  // Reversed subtraction here used to make this condition true on almost
+  // every call, and last_step was never updated.
+  if ((unsigned long)(now - last_step) > 10) {
+    unsigned long elapsed = now - startTime;
 
     float t = float(elapsed) / 1000;
 
@@ -56,7 +65,7 @@ void heartbeat_loop(void) {
 
     neopixelWrite(RGB_BUILTIN, r/5, g/5, b/5);
 
-    elapsed = now;
+    last_step = now;
   }
 }
 
@@ -65,6 +74,8 @@ void heartbeat_loop(void) {
 void heartbeat_init(void) { pinMode(LED_BUILTIN, OUTPUT); }
 
 void heartbeat_loop(void) {
+  if (!heartbeat_enabled) return;
+
   static unsigned int counter = 0;
   static unsigned long step = 0;
   unsigned long now = micros();

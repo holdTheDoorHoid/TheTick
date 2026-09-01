@@ -19,8 +19,6 @@
 #include <cstddef>
 #include <Arduino.h>
 
-void detachInterrupts(void);
-void attachInterrupts(void);
 void output_debug_string(String s);
 byte hex_to_byte(char in);
 char c2h(unsigned char c);

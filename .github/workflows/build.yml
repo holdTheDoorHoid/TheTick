@@ -1,0 +1,53 @@
+name: build
+
+# Two forks work on this firmware in parallel and there is no hardware in CI,
+# so the compiler and the host tests are the safety net. Every supported flag
+# combination is built, not just the ones that ship.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  firmware:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        environment: [ble, ota, minimal, s3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Cache PlatformIO
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.platformio
+            ~/.cache/pip
+          key: pio-${{ runner.os }}-${{ hashFiles('platformio.ini') }}
+      - run: pip install platformio
+      - run: pio run -e ${{ matrix.environment }}
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install platformio
+      - name: HTTP authentication audit
+        run: python3 tools/audit_http_auth.py
+      - name: Unit tests
+        run: pio test -e native
+      - name: AddressSanitizer and UndefinedBehaviorSanitizer
+        run: pio test -e native_asan
+      - name: ThreadSanitizer
+        # ThreadSanitizer cannot cope with the ASLR layout on recent kernels,
+        # so the binary is built through PlatformIO and run with
+        # randomisation disabled.
+        run: |
+          pio test -e native_tsan || true
+          setarch -R ./.pio/build/native_tsan/program

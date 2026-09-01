@@ -1,10 +1,17 @@
 [tick]
 name=TheTick
+; mode selects the wire protocol. Valid values come from the driver registry:
+; NONE, WIEGAND, CLOCKANDDATA, OSDP_PD, OSDP_CP. A name this build does not
+; support is reported on the display and in the log rather than silently
+; falling back to doing nothing.
 mode=NONE
 pin_vsense=4
 vsense_factor=11.0
 pin_reset=9
 dos_id=7fffffff:31
+; Status LED. Off by default: a pulsing light on a device hidden inside a
+; card reader is a liability.
+heartbeat=false
 
 [wifi_hotspot]
 enable=true
@@ -41,6 +48,10 @@ service=accesscontrol
 priority=36
 host=TheTick
 
+; Leaving both of these empty runs the web interface with no password at all.
+; That is the default so a device is always recoverable, but it means anyone
+; who can reach it can read the log and replay credentials - the dashboard
+; says so while they are unset.
 [http]
 username=
 password=
@@ -55,8 +66,9 @@ pin_de=7
 pin_re=10
 pin_rx=20
 pin_tx=21
+; pin_term is omitted where no bus terminator is fitted.
 baudrate=115200
 terminator=false
 address=101
+; 32 hex characters, or empty for no secure channel.
 scbk=
-mk=

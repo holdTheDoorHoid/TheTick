@@ -18,6 +18,8 @@
 #ifndef TICK_HEARTBEAT_H
 #define TICK_HEARTBEAT_H
 
+extern bool heartbeat_enabled;
+
 void heartbeat_init(void);
 void heartbeat_loop(void);
 

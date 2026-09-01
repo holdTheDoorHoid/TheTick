@@ -35,6 +35,30 @@
 // 0-48 with 26-32 on flash and PSRAM, the C5 differs again. Moving a config
 // file between chips without checking is how you end up driving a flash pin.
 
+// Which ESP32 family this firmware is running on. Named explicitly so the
+// per-chip pin rules can be expressed as data and tested for every chip from
+// a single host build, rather than hiding behind preprocessor branches that
+// only ever compile one way.
+enum tick_chip {
+  TICK_CHIP_UNKNOWN = 0,
+  TICK_CHIP_ESP32C3,
+  TICK_CHIP_ESP32S3,
+  TICK_CHIP_ESP32C5,
+};
+
+// The chip this build targets.
+tick_chip tick_chip_current(void);
+
+// True if `pin` is committed to flash, PSRAM or USB on `chip` and must not be
+// repurposed. Pure function of its arguments.
+bool tick_pin_reserved_on(tick_chip chip, int pin);
+
+// True if `pin` is on ADC1 for `chip`. ADC2 is unreadable while WiFi is up.
+bool tick_pin_is_adc1_on(tick_chip chip, int pin);
+
+// Highest GPIO number the chip exposes, exclusive.
+int tick_chip_pin_count(tick_chip chip);
+
 // Sentinel for "this board does not have that pin". Deliberately a signed
 // type: the previous PIN_TERM_DEFAULT was a uint8_t holding -1, which became
 // 255, so the `!= -1` guard was never false and the code configured GPIO 255.

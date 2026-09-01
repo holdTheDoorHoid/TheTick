@@ -21,6 +21,7 @@
 
 #include "HardwareSerial.h"
 #include "tick_board.h"
+#include "tick_heartbeat.h"
 #include "tick_default_config.h"
 #include "tick_osdp.h"
 #include "tick_protocol.h"
@@ -78,6 +79,7 @@ static void applyBoardDefaults(void) {
   tick_pin.reset = TICK_BOARD.pin_reset;
   tick_pin.vsense = TICK_BOARD.pin_vsense;
   vsense_factor = TICK_BOARD.vsense_factor;
+  osdp_pins_defaults();
 }
 
 bool loadConfig(const char* filename) {
@@ -123,6 +125,12 @@ bool loadConfig(const char* filename) {
   }
   if (ini.getValue("tick", "pin_aux", buffer, bufferLen, value)) {
     tick_pin.aux = value;
+  }
+  {
+    bool flag = false;
+    if (ini.getValue("tick", "heartbeat", buffer, bufferLen, flag)) {
+      heartbeat_enabled = flag;
+    }
   }
 
   // The two reader data lines are shared by every wire protocol, so they are

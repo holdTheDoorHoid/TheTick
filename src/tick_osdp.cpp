@@ -30,14 +30,21 @@ static int pin_rx = TICK_PIN_NONE;
 static int pin_tx = TICK_PIN_NONE;
 static int pin_term = TICK_PIN_NONE;
 
-void osdp_pins_configure(SPIFFSIniFile &ini, char *buffer, size_t buffer_len) {
-  int value = 0;
-
+void osdp_pins_defaults(void) {
   pin_de = TICK_BOARD.osdp_pin_de;
   pin_re = TICK_BOARD.osdp_pin_re;
   pin_rx = TICK_BOARD.osdp_pin_rx;
   pin_tx = TICK_BOARD.osdp_pin_tx;
   pin_term = TICK_BOARD.osdp_pin_term;
+}
+
+void osdp_pins_configure(SPIFFSIniFile &ini, char *buffer, size_t buffer_len) {
+  int value = 0;
+
+  // Deliberately no reset to board defaults here. config.default is read
+  // first and config.txt is overlaid on top of it, so re-seeding on every
+  // pass would throw away whatever config.default set for any key the
+  // operator's own file happens not to mention.
 
   if (ini.getValue("osdp", "pin_de", buffer, buffer_len, value)) pin_de = value;
   if (ini.getValue("osdp", "pin_re", buffer, buffer_len, value)) pin_re = value;

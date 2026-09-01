@@ -208,8 +208,9 @@ function encodeWiegand(format, facilityCode, cardNumber) {
 }
 
 function send_wiegand(data) {
-  $.get("/txid?v=" + data);
-  alert(`Data sent: ${data}`);
+  $.get("/txid?v=" + encodeURIComponent(data))
+    .done(function () { alert(`Data sent: ${data}`); })
+    .fail(function (xhr) { alert(`Send refused: ${xhr.status} ${xhr.responseText}`); });
 }
 
 function send_wiegand_raw(event) {
@@ -255,12 +256,19 @@ $(document).ready(function () {
           if (rawData.length != bitLength) {
             let { format, facilityCode, cardNumber, paddedData } = decodeWiegand(rawData, bitLength);
             let time = get_epoch_time(epochs, parts[0], parts[1]);
-            tableBody += `<tr><td>${time}</td><td>${wiegand}</td><td>${format}</td><td>${facilityCode}</td><td>${cardNumber}</td><td>${paddedData}</td><td><i class="fas fa-reply" onclick="send_wiegand('${wiegand}');"></i></td></tr>`;
+            // Values here come from the log, which holds data read off the
+            // wire and text supplied over HTTP. Escaped, and the replay
+            // control carries its value in a data attribute rather than in
+            // an inline onclick that the value could break out of.
+            tableBody += `<tr><td>${esc(time)}</td><td>${esc(wiegand)}</td><td>${esc(format)}</td><td>${esc(facilityCode)}</td><td>${esc(cardNumber)}</td><td>${esc(paddedData)}</td><td><i class="fas fa-reply tick-replay" role="button" tabindex="0" data-value="${esc(wiegand)}"></i></td></tr>`;
           }
         }
       }
     });
     $("#dataTable tbody").html(tableBody);
+    $("#dataTable tbody").on("click", ".tick-replay", function () {
+      send_wiegand($(this).attr("data-value"));
+    });
     $('#dataTable').DataTable();
   });
 });

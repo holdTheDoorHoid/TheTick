@@ -21,6 +21,10 @@
 // Read the RS-485 transceiver pin assignments. Always compiled, because the
 // transceiver has to be parked in high impedance on every boot whether or not
 // this build speaks OSDP.
+// Seed the transceiver pins from the board table. Called once, before any
+// config file is read.
+void osdp_pins_defaults(void);
+
 void osdp_pins_configure(SPIFFSIniFile &ini, char *buffer, size_t buffer_len);
 
 // Put the transceiver into high impedance with the receiver disabled.

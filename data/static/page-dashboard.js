@@ -69,9 +69,8 @@ function onBodyLoad() {
 function get_features() {
   $.getJSON("/version", function (data) {
 
-    $("#body_features")[0].innerHTML = "<ul>";
-    $("#body_features")[0].innerHTML += (data.features.map(a => "<li>" + a + "</li>").reduce((a, b) => a + b, ""));
-    $("#body_features")[0].innerHTML += "</ul>";
+    $("#body_features").html(
+      "<ul>" + data.features.map(a => "<li>" + esc(a) + "</li>").join("") + "</ul>");
 
   });
 }

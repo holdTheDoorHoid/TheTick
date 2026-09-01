@@ -229,12 +229,15 @@ $(document).ready(function () {
           if (rawData.length == bitLength) {
             let { raw, format, cardData } = decodeClockAndData(rawData, bitLength);
             let time = get_epoch_time(epochs, parts[0], parts[1]);
-            tableBody += `<tr><td>${time}</td><td>${raw}</td><td>${format}</td><td>${cardData}</td><td><i class="fas fa-reply" onclick="send_clockanddata('${clockanddata}');"></i></td></tr>`;
+            tableBody += `<tr><td>${esc(time)}</td><td>${esc(raw)}</td><td>${esc(format)}</td><td>${esc(cardData)}</td><td><i class="fas fa-reply tick-replay" role="button" tabindex="0" data-value="${esc(clockanddata)}"></i></td></tr>`;
           }
         }
       }
     });
     $("#dataTable tbody").html(tableBody);
+    $("#dataTable tbody").on("click", ".tick-replay", function () {
+      send_clockanddata($(this).attr("data-value"));
+    });
     $('#dataTable').DataTable();
   });
 });
