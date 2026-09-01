@@ -17,6 +17,8 @@
 
 #include <string.h>
 
+#include "tick_aes128.h"
+
 // No Arduino dependency here either: the whole detection path is exercised on
 // the host, where a synthetic bus transcript can be replayed through it.
 
@@ -113,6 +115,25 @@ void osdp_monitor_feed(osdp_monitor *mon, const osdp_frame *frame) {
   if (frame->has_scb) {
     switch (frame->scb_type) {
       case OSDP_SCS_11:
+        peer->saw_handshake = true;
+        peer->handshake_count++;
+        // The third byte of the security block says whether the default key
+        // is in use. Zero means SCBK-D, which is printed in the
+        // specification and therefore protects nothing.
+        if (frame->scb_data_len >= 1 && frame->scb_data[0] == 0) {
+          raise(mon, OSDP_THREAT_DEFAULT_KEY, frame->address, frame->id);
+        }
+        // Keep RND.A so it can be paired with the response.
+        if (!frame->is_reply && frame->id == OSDP_CMD_CHLNG &&
+            frame->payload_len >= 8) {
+          memcpy(peer->cp_random, frame->payload, 8);
+          peer->have_challenge = true;
+        }
+        if (!peer->saw_secure_data &&
+            peer->handshake_count > OSDP_MONITOR_SC_RETRY_LIMIT) {
+          raise(mon, OSDP_THREAT_SC_RETRY_STORM, frame->address, frame->id);
+        }
+        break;
       case OSDP_SCS_13:
         peer->saw_handshake = true;
         peer->handshake_count++;
@@ -124,6 +145,36 @@ void osdp_monitor_feed(osdp_monitor *mon, const osdp_frame *frame) {
         }
         break;
       case OSDP_SCS_12:
+        peer->saw_handshake = true;
+        if (frame->scb_data_len >= 1 && frame->scb_data[0] == 0) {
+          raise(mon, OSDP_THREAT_DEFAULT_KEY, frame->address, frame->id);
+        }
+        // REPLY_CCRYPT carries cUID(8) || RND.B(8) || cryptogram(16). With
+        // RND.A from the challenge, every input to the key derivation is now
+        // in hand, so a base key drawn from the usual sample-code patterns
+        // can be recovered by anyone who was listening.
+        if (peer->have_challenge && frame->is_reply &&
+            frame->id == OSDP_REPLY_CCRYPT && frame->payload_len >= 32) {
+          const uint8_t *pd_random = frame->payload + 8;
+          const uint8_t *cryptogram = frame->payload + 16;
+
+          if (osdp_sc_key_matches(OSDP_SCBK_DEFAULT, peer->cp_random, pd_random,
+                                  cryptogram)) {
+            peer->key_recovered = true;
+            memcpy(peer->recovered_key, OSDP_SCBK_DEFAULT, OSDP_KEY_LEN);
+            raise(mon, OSDP_THREAT_DEFAULT_KEY, frame->address, frame->id);
+          } else {
+            uint8_t found[OSDP_KEY_LEN];
+            if (osdp_sc_find_weak_key(peer->cp_random, pd_random, cryptogram,
+                                      found) >= 0) {
+              peer->key_recovered = true;
+              memcpy(peer->recovered_key, found, OSDP_KEY_LEN);
+              raise(mon, OSDP_THREAT_WEAK_KEY, frame->address, frame->id);
+            }
+          }
+          peer->have_challenge = false;
+        }
+        break;
       case OSDP_SCS_14:
         peer->saw_handshake = true;
         break;
@@ -135,8 +186,10 @@ void osdp_monitor_feed(osdp_monitor *mon, const osdp_frame *frame) {
         break;
       case OSDP_SCS_15:
       case OSDP_SCS_16:
-        // Authenticated but readable. Integrity without confidentiality still
-        // leaves the credential on the wire.
+        // Authenticated but not encrypted. The specification allows this and
+        // Bishop Fox call it a null cipher: the frame is protected against
+        // tampering and readable by anyone.
+        raise(mon, OSDP_THREAT_NULL_CIPHER, frame->address, frame->id);
         break;
       default:
         break;
@@ -280,6 +333,9 @@ const char *osdp_threat_name(osdp_threat threat) {
     case OSDP_THREAT_SC_RETRY_STORM: return "sc_retry_storm";
     case OSDP_THREAT_SEQUENCE_ANOMALY: return "sequence_anomaly";
     case OSDP_THREAT_SECURITY_REGRESSION: return "security_regression";
+    case OSDP_THREAT_DEFAULT_KEY: return "default_key";
+    case OSDP_THREAT_WEAK_KEY: return "weak_key";
+    case OSDP_THREAT_NULL_CIPHER: return "null_cipher";
     default: return "none";
   }
 }
@@ -313,9 +369,61 @@ const char *osdp_threat_description(osdp_threat threat) {
     case OSDP_THREAT_SECURITY_REGRESSION:
       return "A session that was encrypted fell back to cleartext without a "
              "reset.";
+    case OSDP_THREAT_DEFAULT_KEY:
+      return "The secure channel is using SCBK-D, the default key printed in "
+             "the OSDP specification. It is public, so the encryption "
+             "protects nothing.";
+    case OSDP_THREAT_WEAK_KEY:
+      return "The base key was recovered from the handshake by trying the "
+             "patterns that appear as hardcoded keys in sample code. Anyone "
+             "listening can decrypt this bus.";
+    case OSDP_THREAT_NULL_CIPHER:
+      return "The secure channel is running in a mode that authenticates but "
+             "does not encrypt, so credentials remain readable on the wire.";
     default:
       return "";
   }
+}
+
+// --- secure channel key oracle ----------------------------------------------
+
+const uint8_t OSDP_SCBK_DEFAULT[OSDP_KEY_LEN] = {
+    0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+    0x38, 0x39, 0x3A, 0x3B, 0x3C, 0x3D, 0x3E, 0x3F};
+
+bool osdp_sc_key_matches(const uint8_t scbk[OSDP_KEY_LEN],
+                         const uint8_t cp_random[8], const uint8_t pd_random[8],
+                         const uint8_t pd_cryptogram[16]) {
+  // S-ENC = AES-ECB(SCBK, 01 82 RND.A[0..5] then zeroes)
+  uint8_t s_enc[16];
+  memset(s_enc, 0, sizeof(s_enc));
+  s_enc[0] = 0x01;
+  s_enc[1] = 0x82;
+  memcpy(s_enc + 2, cp_random, 6);
+  aes128_encrypt(scbk, s_enc, s_enc);
+
+  // cryptogram = AES-ECB(S-ENC, RND.A || RND.B)
+  uint8_t expected[16];
+  memcpy(expected, cp_random, 8);
+  memcpy(expected + 8, pd_random, 8);
+  aes128_encrypt(s_enc, expected, expected);
+
+  return memcmp(expected, pd_cryptogram, 16) == 0;
+}
+
+int osdp_sc_find_weak_key(const uint8_t cp_random[8],
+                          const uint8_t pd_random[8],
+                          const uint8_t pd_cryptogram[16],
+                          uint8_t out_key[OSDP_KEY_LEN]) {
+  uint8_t key[OSDP_KEY_LEN];
+  for (uint32_t i = 0; i < OSDP_WEAK_KEY_COUNT; i++) {
+    if (!osdp_weak_key_candidate(i, key)) break;
+    if (osdp_sc_key_matches(key, cp_random, pd_random, pd_cryptogram)) {
+      if (out_key) memcpy(out_key, key, OSDP_KEY_LEN);
+      return (int)i;
+    }
+  }
+  return -1;
 }
 
 // --- weak key candidates ----------------------------------------------------

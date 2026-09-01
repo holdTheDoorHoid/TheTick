@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "../../src/tick_aes128.cpp"
 #include "../../src/tick_osdp_dissect.cpp"
 #include "../../src/tick_osdp_monitor.cpp"
 
@@ -200,6 +201,170 @@ void test_weak_key_list_contains_known_defaults(void) {
   TEST_ASSERT_TRUE(found_ascending);
 }
 
+// --- attack #4: weak key recovery from a captured handshake -------------------
+
+// Build the cryptogram a peripheral would send, following the derivation in
+// the specification: S-ENC from the base key and RND.A, then the cryptogram
+// over both nonces.
+static std::vector<uint8_t> pd_cryptogram_for(const uint8_t scbk[16],
+                                              const uint8_t rnd_a[8],
+                                              const uint8_t rnd_b[8]) {
+  uint8_t s_enc[16] = {0};
+  s_enc[0] = 0x01;
+  s_enc[1] = 0x82;
+  memcpy(s_enc + 2, rnd_a, 6);
+  aes128_encrypt(scbk, s_enc, s_enc);
+
+  uint8_t crypt[16];
+  memcpy(crypt, rnd_a, 8);
+  memcpy(crypt + 8, rnd_b, 8);
+  aes128_encrypt(s_enc, crypt, crypt);
+  return std::vector<uint8_t>(crypt, crypt + 16);
+}
+
+// A CHLNG then CCRYPT exchange, exactly as it appears on the wire.
+static void replay_handshake(const uint8_t scbk[16], uint8_t scbkd_flag) {
+  uint8_t rnd_a[8] = {0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88};
+  uint8_t rnd_b[8] = {0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04};
+
+  // CHLNG: security block is length 3, type SCS_11, then the key-in-use flag.
+  std::vector<uint8_t> chlng;
+  chlng.push_back(OSDP_PKT_SOM);
+  chlng.push_back(0x01);
+  chlng.push_back(0);
+  chlng.push_back(0);
+  chlng.push_back(0x01 | 0x04 | 0x08);
+  chlng.push_back(3);
+  chlng.push_back(OSDP_SCS_11);
+  chlng.push_back(scbkd_flag);
+  chlng.push_back(OSDP_CMD_CHLNG);
+  for (int i = 0; i < 8; i++) chlng.push_back(rnd_a[i]);
+  size_t total = chlng.size() + 2;
+  chlng[2] = (uint8_t)(total & 0xFF);
+  chlng[3] = (uint8_t)(total >> 8);
+  uint16_t crc = osdp_crc16(chlng.data(), chlng.size());
+  chlng.push_back((uint8_t)(crc & 0xFF));
+  chlng.push_back((uint8_t)(crc >> 8));
+  feed(chlng);
+
+  // CCRYPT: cUID(8) || RND.B(8) || cryptogram(16).
+  std::vector<uint8_t> payload;
+  for (int i = 0; i < 8; i++) payload.push_back((uint8_t)(0xA0 + i));  // cUID
+  for (int i = 0; i < 8; i++) payload.push_back(rnd_b[i]);
+  std::vector<uint8_t> crypt = pd_cryptogram_for(scbk, rnd_a, rnd_b);
+  payload.insert(payload.end(), crypt.begin(), crypt.end());
+
+  std::vector<uint8_t> ccrypt;
+  ccrypt.push_back(OSDP_PKT_SOM);
+  ccrypt.push_back(0x01 | 0x80);
+  ccrypt.push_back(0);
+  ccrypt.push_back(0);
+  ccrypt.push_back(0x01 | 0x04 | 0x08);
+  ccrypt.push_back(3);
+  ccrypt.push_back(OSDP_SCS_12);
+  ccrypt.push_back(scbkd_flag);
+  ccrypt.push_back(OSDP_REPLY_CCRYPT);
+  for (uint8_t b : payload) ccrypt.push_back(b);
+  total = ccrypt.size() + 2;
+  ccrypt[2] = (uint8_t)(total & 0xFF);
+  ccrypt[3] = (uint8_t)(total >> 8);
+  crc = osdp_crc16(ccrypt.data(), ccrypt.size());
+  ccrypt.push_back((uint8_t)(crc & 0xFF));
+  ccrypt.push_back((uint8_t)(crc >> 8));
+  feed(ccrypt);
+}
+
+// The whole point of attack #4: a base key taken from sample code is
+// recoverable by anyone who watched the handshake.
+void test_recovers_weak_key_from_handshake(void) {
+  uint8_t scbk[16];
+  memset(scbk, 0x04, sizeof(scbk));  // the repeated-byte pattern
+
+  replay_handshake(scbk, 1);
+
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_WEAK_KEY));
+  for (int i = 0; i < OSDP_MONITOR_MAX_PEERS; i++) {
+    if (mon.peers[i].in_use && mon.peers[i].address == 0x01) {
+      TEST_ASSERT_TRUE(mon.peers[i].key_recovered);
+      TEST_ASSERT_EQUAL_HEX8_ARRAY(scbk, mon.peers[i].recovered_key, 16);
+    }
+  }
+}
+
+void test_recovers_ascending_and_descending_keys(void) {
+  uint8_t asc[16];
+  for (int i = 0; i < 16; i++) asc[i] = (uint8_t)(0x10 + i);
+  replay_handshake(asc, 1);
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_WEAK_KEY));
+
+  setUp();
+  uint8_t desc[16];
+  for (int i = 0; i < 16; i++) desc[i] = (uint8_t)(0xF0 - i);
+  replay_handshake(desc, 1);
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_WEAK_KEY));
+}
+
+// SCBK-D is published in the specification, so it is called out by name
+// rather than lumped in with the guessed ones.
+void test_identifies_the_specification_default_key(void) {
+  replay_handshake(OSDP_SCBK_DEFAULT, 1);
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_DEFAULT_KEY));
+  TEST_ASSERT_FALSE(saw(OSDP_THREAT_WEAK_KEY));
+}
+
+// The handshake also announces the default key directly, with no crypto
+// needed to notice.
+void test_detects_declared_default_key(void) {
+  uint8_t strong[16] = {0x9f, 0x2c, 0x71, 0xe4, 0x03, 0xba, 0x58, 0xd1,
+                        0x6a, 0xcf, 0x17, 0x82, 0x4e, 0xb9, 0x30, 0x5d};
+  replay_handshake(strong, 0);  // flag says SCBK-D in use
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_DEFAULT_KEY));
+}
+
+// The negative case, which matters as much as the positives: a properly
+// generated key must not be "recovered", or the tool reports every deployment
+// as broken.
+void test_strong_key_is_not_recovered(void) {
+  uint8_t strong[16] = {0x9f, 0x2c, 0x71, 0xe4, 0x03, 0xba, 0x58, 0xd1,
+                        0x6a, 0xcf, 0x17, 0x82, 0x4e, 0xb9, 0x30, 0x5d};
+  replay_handshake(strong, 1);
+
+  TEST_ASSERT_FALSE(saw(OSDP_THREAT_WEAK_KEY));
+  TEST_ASSERT_FALSE(saw(OSDP_THREAT_DEFAULT_KEY));
+  for (int i = 0; i < OSDP_MONITOR_MAX_PEERS; i++) {
+    if (mon.peers[i].in_use && mon.peers[i].address == 0x01) {
+      TEST_ASSERT_FALSE(mon.peers[i].key_recovered);
+    }
+  }
+}
+
+// The oracle itself, independent of any framing.
+void test_key_oracle_accepts_only_the_right_key(void) {
+  uint8_t rnd_a[8] = {1, 2, 3, 4, 5, 6, 7, 8};
+  uint8_t rnd_b[8] = {9, 10, 11, 12, 13, 14, 15, 16};
+  uint8_t scbk[16];
+  for (int i = 0; i < 16; i++) scbk[i] = (uint8_t)(i * 3 + 1);
+
+  std::vector<uint8_t> crypt = pd_cryptogram_for(scbk, rnd_a, rnd_b);
+  TEST_ASSERT_TRUE(osdp_sc_key_matches(scbk, rnd_a, rnd_b, crypt.data()));
+
+  // Every single-bit change to the key must fail.
+  for (int byte = 0; byte < 16; byte++) {
+    for (int bit = 0; bit < 8; bit++) {
+      uint8_t wrong[16];
+      memcpy(wrong, scbk, 16);
+      wrong[byte] ^= (uint8_t)(1 << bit);
+      TEST_ASSERT_FALSE(osdp_sc_key_matches(wrong, rnd_a, rnd_b, crypt.data()));
+    }
+  }
+}
+
+// SCS_15/16 authenticate without encrypting.
+void test_detects_null_cipher_modes(void) {
+  feed(frame(0x01, false, 1, OSDP_SCS_15, OSDP_CMD_POLL, {0xAA}));
+  TEST_ASSERT_TRUE(saw(OSDP_THREAT_NULL_CIPHER));
+}
+
 // --- other signals -----------------------------------------------------------
 
 void test_detects_handshake_retry_storm(void) {
@@ -370,6 +535,13 @@ int main(int, char **) {
   RUN_TEST(test_detects_controller_stuck_in_install_mode);
   RUN_TEST(test_weak_key_candidates);
   RUN_TEST(test_weak_key_list_contains_known_defaults);
+  RUN_TEST(test_recovers_weak_key_from_handshake);
+  RUN_TEST(test_recovers_ascending_and_descending_keys);
+  RUN_TEST(test_identifies_the_specification_default_key);
+  RUN_TEST(test_detects_declared_default_key);
+  RUN_TEST(test_strong_key_is_not_recovered);
+  RUN_TEST(test_key_oracle_accepts_only_the_right_key);
+  RUN_TEST(test_detects_null_cipher_modes);
   RUN_TEST(test_detects_handshake_retry_storm);
   RUN_TEST(test_detects_sequence_anomaly);
   RUN_TEST(test_sequence_restart_is_not_an_anomaly);

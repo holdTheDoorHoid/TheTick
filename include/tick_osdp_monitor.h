@@ -75,6 +75,15 @@ enum osdp_threat {
   OSDP_THREAT_SEQUENCE_ANOMALY,
   // A secure session dropped back to cleartext without a reset.
   OSDP_THREAT_SECURITY_REGRESSION,
+  // The handshake declared SCBK-D, the default key printed in the
+  // specification. It is public, so the channel protects nothing.
+  OSDP_THREAT_DEFAULT_KEY,
+  // The base key was recovered from the handshake by trying the patterns that
+  // turn up as hardcoded keys in sample code.
+  OSDP_THREAT_WEAK_KEY,
+  // SCS_15/16: a security block that authenticates but does not encrypt.
+  // Bishop Fox describe these as null ciphers. Credentials stay readable.
+  OSDP_THREAT_NULL_CIPHER,
   OSDP_THREAT_COUNT
 };
 
@@ -111,6 +120,16 @@ struct osdp_peer_state {
 
   bool seq_known;
   uint8_t last_seq;
+
+  // Handshake capture, so that a challenge seen in one frame can be matched
+  // with the response in the next.
+  bool have_challenge;
+  uint8_t cp_random[8];
+
+  // Set when the base key was recovered. Held so the web interface can show
+  // it: on this device that is the finding, not a secret to protect.
+  bool key_recovered;
+  uint8_t recovered_key[16];
 };
 
 // Reported once per detection, not once per frame: the monitor deduplicates
@@ -170,6 +189,30 @@ const char *osdp_threat_description(osdp_threat threat);
 // Write candidate `index` (0..OSDP_WEAK_KEY_COUNT-1) into `key`.
 // Returns false if the index is out of range.
 bool osdp_weak_key_candidate(uint32_t index, uint8_t key[OSDP_KEY_LEN]);
+
+// SCBK-D, the default base key printed in the OSDP specification. Published,
+// therefore worthless as protection, and singled out by Bishop Fox for
+// existing at all.
+extern const uint8_t OSDP_SCBK_DEFAULT[OSDP_KEY_LEN];
+
+// Recompute the peripheral's cryptogram from a candidate base key and the two
+// nonces, and report whether it matches what the peripheral actually sent.
+//
+// Derivation, per the specification and cross-checked against libosdp:
+//   S-ENC        = AES-128-ECB(SCBK, 01 82 RND.A[0..5] 00 00 00 00 00 00 00 00)
+//   cryptogram   = AES-128-ECB(S-ENC, RND.A[8] || RND.B[8])
+// All three inputs are visible on the wire, which is what makes a weak base
+// key recoverable by anyone listening.
+bool osdp_sc_key_matches(const uint8_t scbk[OSDP_KEY_LEN],
+                         const uint8_t cp_random[8], const uint8_t pd_random[8],
+                         const uint8_t pd_cryptogram[16]);
+
+// Try every weak candidate against an observed handshake. Returns the index
+// of the match and fills `out_key`, or -1 if none matched.
+int osdp_sc_find_weak_key(const uint8_t cp_random[8],
+                          const uint8_t pd_random[8],
+                          const uint8_t pd_cryptogram[16],
+                          uint8_t out_key[OSDP_KEY_LEN]);
 
 #ifdef USE_OSDP_MONITOR
 #include "tick_protocol.h"

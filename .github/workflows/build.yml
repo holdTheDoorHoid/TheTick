@@ -52,7 +52,7 @@ jobs:
         # than relying on whichever binary happened to be built last.
         run: |
           set -euo pipefail
-          for suite in test_capture test_board test_osdp_dissect test_osdp_monitor; do
+          for suite in test_capture test_board test_aes test_osdp_dissect test_osdp_monitor; do
             echo "::group::ThreadSanitizer $suite"
             pio test -e native_tsan -f "$suite" --without-testing
             setarch -R ./.pio/build/native_tsan/program
