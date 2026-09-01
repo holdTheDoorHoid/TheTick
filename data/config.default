@@ -1,7 +1,7 @@
 [tick]
 name=TheTick
 ; mode selects the wire protocol. Valid values come from the driver registry:
-; NONE, WIEGAND, CLOCKANDDATA, OSDP_PD, OSDP_CP. A name this build does not
+; NONE, WIEGAND, CLOCKANDDATA, OSDP_PD, OSDP_CP, OSDP_MONITOR. A name this build does not
 ; support is reported on the display and in the log rather than silently
 ; falling back to doing nothing.
 mode=NONE
@@ -72,3 +72,8 @@ terminator=false
 address=101
 ; 32 hex characters, or empty for no secure channel.
 scbk=
+; OSDP_MONITOR is a passive mode: it brings the transceiver up receive-only,
+; never transmits, and reports the conditions the published OSDP attacks
+; depend on - cleartext sessions, credentials in the clear, readers claiming
+; no encryption support, capability rewrites, and keys installed over the
+; wire. It uses the baudrate above and nothing else from this section.

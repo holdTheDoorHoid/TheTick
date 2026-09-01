@@ -14,6 +14,7 @@
 // You should have received a copy of the GNU General Public License
 
 #include <Arduino.h>
+#include <soc/soc_caps.h>
 
 #include "tick_board.h"
 #include "tick_default_config.h"
@@ -86,6 +87,59 @@ void osdp_disable_transceiver(void) {
   }
 }
 
+// UART0 is the console, so it is deliberately not offered here.
+static HardwareSerial *uart_for(uint8_t index) {
+  switch (index) {
+#if SOC_UART_NUM > 1
+    case 1:
+      return &Serial1;
+#endif
+#if SOC_UART_NUM > 2
+    case 2:
+      return &Serial2;
+#endif
+    default:
+      return NULL;
+  }
+}
+
+// Bring the transceiver up receive-only and hand back the UART.
+//
+// This is what passive monitoring needs and it deliberately does not depend
+// on libosdp: a build that only listens does not need a protocol stack, and
+// keeping the dependency out means the monitor also fits a minimal image.
+HardwareSerial *osdp_listen_begin(int baudrate) {
+  if (!tick_pin_is_valid(pin_rx) || !tick_pin_is_valid_output(pin_de) ||
+      !tick_pin_is_valid_output(pin_re)) {
+    output_debug_string(F("OSDP listen: transceiver pins not usable"));
+    return NULL;
+  }
+
+  HardwareSerial *serial = uart_for(TICK_BOARD.osdp_uart);
+  if (serial == NULL) {
+    output_debug_string(F("OSDP listen: no UART available"));
+    return NULL;
+  }
+
+  // Driver off, receiver on. Nothing this mode does ever drives the bus.
+  pinMode(pin_de, OUTPUT);
+  digitalWrite(pin_de, LOW);
+  pinMode(pin_re, OUTPUT);
+  digitalWrite(pin_re, LOW);
+  pinMode(pin_rx, INPUT);
+  if (tick_pin_is_valid(pin_tx)) pinMode(pin_tx, INPUT);
+
+  // Receive only: no TX pin is handed to the driver, so the firmware cannot
+  // transmit even by mistake.
+  serial->begin(baudrate, SERIAL_8N1, pin_rx, -1);
+  return serial;
+}
+
+void osdp_listen_end(HardwareSerial *serial) {
+  if (serial) serial->end();
+  osdp_disable_transceiver();
+}
+
 #ifdef USE_OSDP
 
 #include <osdp.hpp>
@@ -140,22 +194,6 @@ static osdp_pd_info_t pd_info[] = {{
                 .flush = nullptr},
     .scbk = nullptr,
 }};
-
-// UART0 is the console, so it is deliberately not offered here.
-static HardwareSerial *uart_for(uint8_t index) {
-  switch (index) {
-#if SOC_UART_NUM > 1
-    case 1:
-      return &Serial1;
-#endif
-#if SOC_UART_NUM > 2
-    case 2:
-      return &Serial2;
-#endif
-    default:
-      return NULL;
-  }
-}
 
 int osdp_serial_send_func(void *data, uint8_t *buf, int len) {
   (void)(data);

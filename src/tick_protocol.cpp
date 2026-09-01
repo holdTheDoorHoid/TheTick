@@ -19,6 +19,7 @@
 
 #include "tick_clockanddata_reader.h"
 #include "tick_osdp.h"
+#include "tick_osdp_monitor.h"
 #include "tick_wiegand_reader.h"
 
 // The mode that does nothing. Having a real driver here rather than a null
@@ -56,6 +57,9 @@ const tick_protocol *const tick_protocol_registry[] = {
 #ifdef USE_OSDP
     &tick_protocol_osdp_pd,
     &tick_protocol_osdp_cp,
+#endif
+#ifdef USE_OSDP_MONITOR
+    &tick_protocol_osdp_monitor,
 #endif
 };
 

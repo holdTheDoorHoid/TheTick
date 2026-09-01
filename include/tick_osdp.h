@@ -16,6 +16,8 @@
 #ifndef TICK_OSDP_H
 #define TICK_OSDP_H
 
+#include <HardwareSerial.h>
+
 #include "tick_protocol.h"
 
 // Read the RS-485 transceiver pin assignments. Always compiled, because the
@@ -29,6 +31,12 @@ void osdp_pins_configure(SPIFFSIniFile &ini, char *buffer, size_t buffer_len);
 
 // Put the transceiver into high impedance with the receiver disabled.
 void osdp_disable_transceiver(void);
+
+// Bring the transceiver up receive-only for passive monitoring and return the
+// UART, or NULL if the pins or UART are unusable. No TX pin is given to the
+// driver, so a listening build cannot transmit even by mistake.
+HardwareSerial *osdp_listen_begin(int baudrate);
+void osdp_listen_end(HardwareSerial *serial);
 
 // How many bytes of card data to copy into an OSDP card read event.
 //
