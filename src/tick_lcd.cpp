@@ -73,17 +73,27 @@ void display_line(int line, bool invert, String data){
   display.display();
 }
 
-int temporary_message_millis = 0;
+// Held as a start time plus a duration rather than an absolute deadline in an
+// int, which overflowed after about 24.8 days of uptime and then compared
+// wrong against an unsigned millis().
+static unsigned long temporary_message_start = 0;
+static unsigned long temporary_message_duration = 0;
+static bool temporary_message_active = false;
+
 void display_temporary_message(String data, int duration){
   display_line(3, true, data);
   display.dim(false);
-  temporary_message_millis = millis() + duration;
+  temporary_message_start = millis();
+  temporary_message_duration = (duration > 0) ? (unsigned long)duration : 0;
+  temporary_message_active = true;
 }
 
 void display_loop(){
-  if(temporary_message_millis != 0 && (temporary_message_millis <= millis() || millis() < 10)){
+  if (!temporary_message_active) return;
+  if ((unsigned long)(millis() - temporary_message_start) >=
+      temporary_message_duration) {
     display_line(3, false, "");
-    temporary_message_millis = 0;
+    temporary_message_active = false;
     display.dim(true);
     display.display();
   }
@@ -95,8 +105,20 @@ void display_init() {
 }
 #else
 
-void display_string(String data) {}
-void display_temporary_message(String data, int duration) {}
+// Every symbol tick_lcd.h declares needs a stub here. display_line() and
+// display_status_message() were missing, so any build without USE_LCD failed
+// to link - which is why only the two shipped flag combinations ever built.
+void display_string(String data) { (void)data; }
+void display_status_message(String data) { (void)data; }
+void display_line(int line, bool invert, String data) {
+  (void)line;
+  (void)invert;
+  (void)data;
+}
+void display_temporary_message(String data, int duration) {
+  (void)data;
+  (void)duration;
+}
 void display_init() {}
 void display_loop() {}
 

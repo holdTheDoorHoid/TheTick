@@ -16,32 +16,37 @@
 #ifndef TICK_OSDP_H
 #define TICK_OSDP_H
 
-#ifdef USE_OSDP
+#include "tick_protocol.h"
 
-#include <Arduino.h>
-#include <osdp.hpp>
+// Read the RS-485 transceiver pin assignments. Always compiled, because the
+// transceiver has to be parked in high impedance on every boot whether or not
+// this build speaks OSDP.
+void osdp_pins_configure(SPIFFSIniFile &ini, char *buffer, size_t buffer_len);
 
-void osdp_drain();
-void osdp_restore();
-
-int osdp_serial_send_func(void *data, uint8_t *buf, int len);
-int osdp_serial_recv_func(void *data, uint8_t *buf, int len);
-
-void osdp_transmit_id(String sendValue, unsigned long bitcount);
-
-int osdp_pd_event_handler(void *data, struct osdp_cmd *cmd);
-int osdp_cp_event_handler(void *data, int pd, struct osdp_event *event);
-
+// Put the transceiver into high impedance with the receiver disabled.
 void osdp_disable_transceiver(void);
 
-void osdp_init(void);
+// How many bytes of card data to copy into an OSDP card read event.
+//
+// The overflow this replaces came from sizing the copy as hex_len/2 with no
+// limit, so a long value posted to /txid ran past a 64 byte buffer. Deriving
+// the count from the declared bit length instead makes it inherently bounded
+// - a credential can only be as long as the bit count says it is - and the
+// remaining two clamps mean no combination of arguments can exceed the
+// destination.
+//
+// Exposed here rather than kept private so it can be tested on the host.
+static inline size_t osdp_cardread_bytes(size_t hex_len, unsigned long bits,
+                                         size_t max_bytes) {
+  size_t from_bits = (size_t)((bits + 7) / 8);
+  size_t from_hex = hex_len / 2;
+  size_t n = from_bits < from_hex ? from_bits : from_hex;
+  return n > max_bytes ? max_bytes : n;
+}
 
-void osdp_loop(void);
-
-#else
-
-void osdp_init(void);
-void osdp_loop(void);
-
+#ifdef USE_OSDP
+extern const tick_protocol tick_protocol_osdp_pd;
+extern const tick_protocol tick_protocol_osdp_cp;
 #endif
+
 #endif

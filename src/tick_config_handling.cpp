@@ -20,53 +20,65 @@
 #include <cstddef>
 
 #include "HardwareSerial.h"
+#include "tick_board.h"
 #include "tick_default_config.h"
+#include "tick_osdp.h"
+#include "tick_protocol.h"
 #include "tick_utils.h"
 
-char log_name[CONFIG_VAR_LENGTH];
+char log_name[CONFIG_VAR_LENGTH] = LOG_NAME;
 
-enum tick_mode current_tick_mode = tick_mode_disabled;
+struct tick_pins tick_pin = {
+    .d0 = TICK_PIN_NONE,
+    .d1 = TICK_PIN_NONE,
+    .aux = TICK_PIN_NONE,
+    .reset = TICK_PIN_NONE,
+    .vsense = TICK_PIN_NONE,
+};
+float vsense_factor = 1.0f;
 
-int pin_aux = PIN_AUX_DEFAULT;
-int pin_vsense, pin_reset;
-float vsense_factor;
+char DoS_id[CONFIG_PASSWORD_LENGTH] = {0};
 
-int wiegand_pin_d0 = PIN_D0_DEFAULT;
-int wiegand_pin_d1 = PIN_D1_DEFAULT;
-int wiegand_pulse_width, wiegand_pulse_gap;
+char ble_uuid_wiegand_service[CONFIG_UUID_LENGTH] = {0};
+char ble_uuid_wiegand_characteristic[CONFIG_UUID_LENGTH] = {0};
+uint32_t ble_passkey = 0;
 
-int clockanddata_pin_clock, clockanddata_pin_data;
-int clockanddata_pulse_width;
+bool ap_enable = true, ap_hidden = false;
+char ap_ssid[CONFIG_SSID_LENGTH] = {0}, ap_psk[CONFIG_PASSWORD_LENGTH] = {0};
+IPAddress ap_ip(192, 168, 4, 1);
+char station_ssid[CONFIG_SSID_LENGTH] = {0};
+char station_psk[CONFIG_PASSWORD_LENGTH] = {0};
 
-int osdp_pin_term = PIN_TERM_DEFAULT;
-int osdp_pin_de, osdp_pin_re, osdp_pin_rx, osdp_pin_tx;
-int osdp_baudrate, osdp_address;
-bool osdp_terminator;
-HardwareSerial* osdp_serial = &Serial1;
-char osdp_scbk[CONFIG_PASSWORD_LENGTH], osdp_mk[CONFIG_PASSWORD_LENGTH];
+char mDNShost[CONFIG_VAR_LENGTH] = MDNSHOST;
 
-char ble_uuid_wiegand_service[CONFIG_UUID_LENGTH],
-    ble_uuid_wiegand_characteristic[CONFIG_UUID_LENGTH];
-uint32_t ble_passkey;
+char ota_password[CONFIG_PASSWORD_LENGTH] = {0};
 
-bool ap_enable, ap_hidden;
-char ap_ssid[CONFIG_SSID_LENGTH], ap_psk[CONFIG_PASSWORD_LENGTH];
-IPAddress ap_ip;
-char station_ssid[CONFIG_SSID_LENGTH], station_psk[CONFIG_PASSWORD_LENGTH];
-
-char mDNShost[CONFIG_VAR_LENGTH];
-
-char DoS_id[CONFIG_PASSWORD_LENGTH];
-
-char ota_password[CONFIG_PASSWORD_LENGTH];
-
-char www_username[CONFIG_VAR_LENGTH], www_password[CONFIG_PASSWORD_LENGTH];
+char www_username[CONFIG_VAR_LENGTH] = {0};
+char www_password[CONFIG_PASSWORD_LENGTH] = {0};
+bool www_auth_disabled = true;
 
 IPAddress syslog_server;
-unsigned int syslog_port;
-char syslog_service_name[CONFIG_VAR_LENGTH];
-char syslog_host[CONFIG_VAR_LENGTH];
-byte syslog_priority;
+unsigned int syslog_port = 514;
+char syslog_service_name[CONFIG_VAR_LENGTH] = {0};
+char syslog_host[CONFIG_VAR_LENGTH] = {0};
+byte syslog_priority = 36;
+
+// Name of the mode requested by the config file, so that a mode which is
+// spelled correctly but not compiled into this build can be reported as such
+// rather than silently becoming "disabled".
+static char requested_mode[CONFIG_VAR_LENGTH] = {0};
+
+// Apply the board table. Called before any config file is read, so that a
+// missing key leaves a sane board default rather than zero - and zero is
+// GPIO 0, which on these boards is both a strapping pin and the default D0.
+static void applyBoardDefaults(void) {
+  tick_pin.d0 = TICK_BOARD.pin_d0;
+  tick_pin.d1 = TICK_BOARD.pin_d1;
+  tick_pin.aux = TICK_BOARD.pin_aux;
+  tick_pin.reset = TICK_BOARD.pin_reset;
+  tick_pin.vsense = TICK_BOARD.pin_vsense;
+  vsense_factor = TICK_BOARD.vsense_factor;
+}
 
 bool loadConfig(const char* filename) {
   const size_t bufferLen = 80;
@@ -86,78 +98,60 @@ bool loadConfig(const char* filename) {
     return false;
   }
 
-  char t_tick_mode[CONFIG_VAR_LENGTH];
-  ini.getValue("tick", "mode", buffer, bufferLen, t_tick_mode,
-               CONFIG_VAR_LENGTH);
+  int value = 0;
 
+  // Every getValue result is checked. Previously they were all discarded, so
+  // a missing key left the target at whatever it happened to hold - and in
+  // the case of the mode string, that was uninitialised stack.
+  ini.getValue("tick", "mode", buffer, bufferLen, requested_mode,
+               CONFIG_VAR_LENGTH);
   ini.getValue("tick", "name", buffer, bufferLen, log_name, CONFIG_VAR_LENGTH);
-  strcpy(mDNShost, log_name);
   ini.getValue("tick", "dos_id", buffer, bufferLen, DoS_id,
                CONFIG_PASSWORD_LENGTH);
 
-  ini.getValue("tick", "pin_vsense", buffer, bufferLen, pin_vsense);
-  ini.getValue("tick", "vsense_factor", buffer, bufferLen, vsense_factor);
-  ini.getValue("tick", "pin_reset", buffer, bufferLen, pin_reset);
-  ini.getValue("tick", "pin_aux", buffer, bufferLen, pin_aux);
-
-  ini.getValue("wiegand", "pin_d0", buffer, bufferLen, wiegand_pin_d0);
-  ini.getValue("wiegand", "pin_d1", buffer, bufferLen, wiegand_pin_d1);
-#ifdef USE_WIEGAND
-  if (strcasecmp(t_tick_mode, "WIEGAND") == 0) {
-    current_tick_mode = tick_mode_wiegand;
+  if (ini.getValue("tick", "pin_vsense", buffer, bufferLen, value)) {
+    tick_pin.vsense = value;
+  }
+  {
+    float f = 0.0f;
+    if (ini.getValue("tick", "vsense_factor", buffer, bufferLen, f)) {
+      vsense_factor = f;
+    }
+  }
+  if (ini.getValue("tick", "pin_reset", buffer, bufferLen, value)) {
+    tick_pin.reset = value;
+  }
+  if (ini.getValue("tick", "pin_aux", buffer, bufferLen, value)) {
+    tick_pin.aux = value;
   }
 
-  ini.getValue("wiegand", "pulse_width", buffer, bufferLen,
-               wiegand_pulse_width);
-  ini.getValue("wiegand", "pulse_gap", buffer, bufferLen, wiegand_pulse_gap);
-#endif
-
-#ifdef USE_CLOCKANDDATA
-  if (strcasecmp(t_tick_mode, "CLOCKANDDATA") == 0) {
-    current_tick_mode = tick_mode_clockanddata;
+  // The two reader data lines are shared by every wire protocol, so they are
+  // read here; the [wiegand] section keeps them for backwards compatibility
+  // with existing config files.
+  if (ini.getValue("wiegand", "pin_d0", buffer, bufferLen, value)) {
+    tick_pin.d0 = value;
   }
-  ini.getValue("clockanddata", "pin_clock", buffer, bufferLen,
-               clockanddata_pin_clock);
-  ini.getValue("clockanddata", "pin_data", buffer, bufferLen,
-               clockanddata_pin_data);
-  ini.getValue("clockanddata", "pulse_width", buffer, bufferLen,
-               clockanddata_pulse_width);
-#endif
-
-ini.getValue("osdp", "pin_term", buffer, bufferLen, osdp_pin_term);
-ini.getValue("osdp", "pin_de", buffer, bufferLen, osdp_pin_de);
-ini.getValue("osdp", "pin_re", buffer, bufferLen, osdp_pin_re);
-ini.getValue("osdp", "pin_rx", buffer, bufferLen, osdp_pin_rx);
-ini.getValue("osdp", "pin_tx", buffer, bufferLen, osdp_pin_tx);
-
-#ifdef USE_OSDP
-  if (strcasecmp(t_tick_mode, "OSDP_PD") == 0) {
-    current_tick_mode = tick_mode_osdp_pd;
+  if (ini.getValue("wiegand", "pin_d1", buffer, bufferLen, value)) {
+    tick_pin.d1 = value;
   }
-  if (strcasecmp(t_tick_mode, "OSDP_CP") == 0) {
-    current_tick_mode = tick_mode_osdp_cp;
+  if (ini.getValue("clockanddata", "pin_clock", buffer, bufferLen, value)) {
+    tick_pin.d0 = value;
+  }
+  if (ini.getValue("clockanddata", "pin_data", buffer, bufferLen, value)) {
+    tick_pin.d1 = value;
   }
 
-  ini.getValue("osdp", "baudrate", buffer, bufferLen, osdp_baudrate);
+  // The transceiver pins are needed even in builds without OSDP, so that the
+  // driver can be parked on boot.
+  osdp_pins_configure(ini, buffer, bufferLen);
 
-  if (osdp_baudrate != 9600 && osdp_baudrate != 19200 &&
-      osdp_baudrate != 38400 && osdp_baudrate != 115200 &&
-      osdp_baudrate != 230400) {
-    output_debug_string("Invalid OSDP baudrate");
-    osdp_baudrate = 115200;
+  // Hand the file to every registered protocol driver so it can pick up its
+  // own settings. This is the hook that keeps this function from having to
+  // know what a protocol module contains.
+  for (size_t i = 0; i < tick_protocol_registry_count; i++) {
+    const tick_protocol *proto = tick_protocol_registry[i];
+    if (proto->configure) proto->configure(ini, buffer, bufferLen);
   }
-
-  ini.getValue("osdp", "terminator", buffer, bufferLen, osdp_terminator);
-  ini.getValue("osdp", "address", buffer, bufferLen, osdp_address);
-
-  ini.getValue("osdp", "scbk", buffer, bufferLen, osdp_scbk,
-               CONFIG_PASSWORD_LENGTH);
-  ini.getValue("osdp", "mk", buffer, bufferLen, osdp_mk,
-               CONFIG_PASSWORD_LENGTH);
-
-
-
-#endif
 
 #ifdef USE_WIFI
   ini.getValue("wifi_hotspot", "enable", buffer, bufferLen, ap_enable);
@@ -204,11 +198,95 @@ ini.getValue("osdp", "pin_tx", buffer, bufferLen, osdp_pin_tx);
                CONFIG_UUID_LENGTH);
   ini.getValue("ble", "characteristic", buffer, bufferLen,
                ble_uuid_wiegand_characteristic, CONFIG_UUID_LENGTH);
-  ini.getValue("ble", "passkey", buffer, bufferLen, ble_passkey);
+  {
+    // Read through an explicit unsigned long rather than passing the uint32_t
+    // straight in. SPIFFSIniFile overloads on the underlying types, and
+    // uint32_t is "unsigned long" on the RISC-V targets but "unsigned int" on
+    // Xtensa - so passing it directly compiles for the C3 and C5 and fails to
+    // resolve for the S3.
+    unsigned long passkey = 0;
+    if (ini.getValue("ble", "passkey", buffer, bufferLen, passkey)) {
+      ble_passkey = (uint32_t)passkey;
+    }
+  }
 #endif
 
   ini.close();
 
   output_debug_string("Reading config END");
   return true;
+}
+
+// Reject pins the chip cannot actually offer, before anything tries to use
+// them. A config written for one chip and flashed onto another is the normal
+// way this goes wrong.
+static void validatePins(void) {
+  tick_pin.d0 =
+      tick_pin_checked("pin_d0", tick_pin.d0, TICK_BOARD.pin_d0, true);
+  tick_pin.d1 =
+      tick_pin_checked("pin_d1", tick_pin.d1, TICK_BOARD.pin_d1, true);
+  tick_pin.aux =
+      tick_pin_checked("pin_aux", tick_pin.aux, TICK_BOARD.pin_aux, false);
+  tick_pin.reset =
+      tick_pin_checked("pin_reset", tick_pin.reset, TICK_BOARD.pin_reset, false);
+  tick_pin.vsense = tick_pin_checked("pin_vsense", tick_pin.vsense,
+                                     TICK_BOARD.pin_vsense, false);
+
+  if (tick_pin.d0 == tick_pin.d1) {
+    output_debug_string(F("pin_d0 and pin_d1 are the same pin"));
+  }
+
+  // ADC2 cannot be read while WiFi is up, so a vsense pin on ADC2 reports
+  // nonsense in the only state the device is ever actually in.
+  if (tick_pin.vsense != TICK_PIN_NONE && !tick_pin_is_adc1(tick_pin.vsense)) {
+    output_debug_string(String("pin_vsense ") + tick_pin.vsense +
+                        " is not on ADC1, readings will be unreliable");
+  }
+}
+
+bool loadAllConfig(void) {
+  applyBoardDefaults();
+
+  bool have_defaults = loadConfig(DEFAULT_CONFIG_FILE);
+  if (!have_defaults) {
+    // Not fatal any more: the board table already supplied working pins, so
+    // the device can still come up, serve its interface and be recovered.
+    output_debug_string(F("No default configuration, using board defaults."));
+  }
+
+  if (!loadConfig(CONFIG_FILE)) {
+    output_debug_string(F("No configuration. Using defaults."));
+  }
+
+  validatePins();
+
+#ifdef USE_HTTP
+  www_auth_disabled =
+      (strlen(www_username) == 0 || strlen(www_password) == 0);
+#endif
+
+#ifdef USE_WIFI
+  // An access point with no usable PSK would come up open. Refusing to start
+  // it is the safer failure for a device whose whole job is to be discreet.
+  if (ap_enable && strlen(ap_psk) > 0 && strlen(ap_psk) < 8) {
+    output_debug_string(F("AP passphrase under 8 characters, disabling AP"));
+    ap_enable = false;
+  }
+#endif
+
+  // Select the wire protocol. An unknown name is reported rather than
+  // silently falling through to disabled, because "typo in config.txt" and
+  // "this build has no OSDP" look identical from the outside otherwise.
+  const tick_protocol *proto = tick_protocol_find(requested_mode);
+  if (proto == NULL) {
+    if (strlen(requested_mode) > 0 && strcasecmp(requested_mode, "NONE") != 0) {
+      output_debug_string(String("Unknown or unavailable mode: ") +
+                          requested_mode);
+      append_log("config", String("unknown mode ") + requested_mode);
+    }
+    proto = &tick_protocol_disabled;
+  }
+  tick_protocol_select(proto);
+
+  return have_defaults;
 }

@@ -17,6 +17,7 @@
 
 #include <NimBLEDevice.h>
 #include "Arduino.h"
+#include "tick_capture.h"
 #include "tick_utils.h"
 
 static NimBLEServer *pServer;
@@ -40,11 +41,13 @@ class CharacteristicCallbacks : public NimBLECharacteristicCallbacks {
     String value = String(cardCharacteristic->getValue().c_str());
     DBG_OUTPUT_PORT.print(F("BLE WRITE: "));
     DBG_OUTPUT_PORT.println(value);
-    if (value.length() > 0) {
-        String sendValue = value.substring(0, value.indexOf(":"));
-        sendValue.toUpperCase();
-        unsigned long bitcount = value.substring(value.indexOf(":") + 1).toInt();
-        transmit_id(sendValue, bitcount);
+
+    // Queue it; the main loop transmits. This callback runs on the NimBLE
+    // host task, and bit-banging a waveform here would block the BLE stack
+    // for tens of milliseconds while racing the capture path on the main
+    // loop - on a dual core part, genuinely in parallel.
+    if (!tick_tx_submit_pair(value.c_str())) {
+      DBG_OUTPUT_PORT.println(F("BLE WRITE rejected"));
     }
   }
 } chrCallbacks;

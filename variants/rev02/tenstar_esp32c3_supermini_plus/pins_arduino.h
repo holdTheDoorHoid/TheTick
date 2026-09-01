@@ -32,9 +32,10 @@ static const uint8_t A3 = 3;
 static const uint8_t A4 = 4;
 static const uint8_t A5 = 5;
 
-static const uint8_t PIN_D0_DEFAULT = 0;
-static const uint8_t PIN_D1_DEFAULT = 1;
-static const uint8_t PIN_AUX_DEFAULT = 5;
-static const uint8_t PIN_TERM_DEFAULT = -1;
+
+// The Tick's own pin assignments used to live here too. They are in
+// include/tick_board.h now: this file describes the module's Arduino pin
+// mapping, which is a separate concern and one that has to be duplicated
+// for every board.
 
 #endif /* Pins_Arduino_h */
