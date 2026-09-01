@@ -1,0 +1,32 @@
+# Rust rewrite of The Tick, in progress.
+#
+# The workspace is deliberately split so that the code which parses untrusted
+# input can be built, tested and audited without a microcontroller anywhere in
+# the picture. Those crates are no_std and forbid unsafe outright.
+
+[workspace]
+resolver = "2"
+members = ["tick-osdp"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/holdTheDoorHoid/TheTick"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+# The whole point of this rewrite is that a parser reading a hostile wire
+# cannot panic or read out of bounds. Indexing and arithmetic that could do
+# either are denied rather than merely discouraged.
+indexing_slicing = "deny"
+arithmetic_side_effects = "deny"
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+integer_division = "warn"
+cast_possible_truncation = "warn"
