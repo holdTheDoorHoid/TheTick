@@ -322,6 +322,41 @@ size_t osdp_monitor_feed_bytes(osdp_monitor *mon, const uint8_t *buf,
   return pos;
 }
 
+const osdp_peer_state *osdp_monitor_peer(const osdp_monitor *mon,
+                                         uint8_t address) {
+  if (mon == NULL) return NULL;
+  for (int i = 0; i < OSDP_MONITOR_MAX_PEERS; i++) {
+    if (mon->peers[i].in_use && mon->peers[i].address == address) {
+      return &mon->peers[i];
+    }
+  }
+  return NULL;
+}
+
+// 4 = critical, 3 = high, 2 = medium, 1 = low, 0 = info. Matches
+// tick_severity without this file having to depend on that header.
+int osdp_threat_severity(osdp_threat threat) {
+  switch (threat) {
+    // The base key is known to an observer: everything else follows.
+    case OSDP_THREAT_WEAK_KEY:
+    case OSDP_THREAT_DEFAULT_KEY:
+    case OSDP_THREAT_INSTALL_MODE:
+      return 4;
+    // Credentials are readable, or something is rewriting the wire.
+    case OSDP_THREAT_CLEARTEXT_CARD_READ:
+    case OSDP_THREAT_CLEARTEXT_SESSION:
+    case OSDP_THREAT_CAPABILITY_CHANGED:
+    case OSDP_THREAT_SECURITY_REGRESSION:
+    case OSDP_THREAT_KEYSET_ON_WIRE:
+      return 3;
+    case OSDP_THREAT_NO_CRYPTO_ADVERTISED:
+    case OSDP_THREAT_NULL_CIPHER:
+      return 2;
+    default:
+      return 1;
+  }
+}
+
 const char *osdp_threat_name(osdp_threat threat) {
   switch (threat) {
     case OSDP_THREAT_CLEARTEXT_SESSION: return "cleartext_session";

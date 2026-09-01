@@ -26,8 +26,12 @@
 
 #include "tick_board.h"
 #include "tick_capture.h"
+#include "tick_findings.h"
 #include "tick_http.h"
 #include "tick_protocol.h"
+#ifdef USE_OSDP_MONITOR
+#include "tick_osdp_monitor.h"
+#endif
 #include "tick_utils.h"
 
 WebServer server(80);
@@ -357,6 +361,60 @@ void http_init(void) {
     json += ",\"modes\":[" + modes + "]";
     json += ",\"mode\":" + jsonString(tick_proto_name());
     json += ",\"auth\":" + String(www_auth_disabled ? "false" : "true");
+    json += "}\n";
+    server.send(200, "application/json", json);
+  });
+
+  // Findings and bus state, for the assessment page and the client report.
+  server.on("/osdp.json", HTTP_GET, []() {
+    if (basicAuthFailed()) return;
+
+    static char findings[2048];
+    tick_findings_to_json(&tick_global_findings, findings, sizeof(findings));
+
+    String json = "{";
+    json += "\"device\":" + jsonString(String(log_name) + "-" +
+                                       String(getChipID(), HEX));
+    json += ",\"board\":" + jsonString(TICK_BOARD.name);
+    json += ",\"version\":" + jsonString(VERSION);
+    json += ",\"mode\":" + jsonString(tick_proto_name());
+    json += ",\"uptime_ms\":" + String(millis());
+    json += ",\"boot\":" + String(getBootCount());
+    json += ",\"worst\":" +
+            jsonString(tick_severity_name(tick_findings_worst(&tick_global_findings)));
+    json += ",\"dropped\":" + String(tick_global_findings.dropped);
+
+#ifdef USE_OSDP_MONITOR
+    const osdp_monitor *mon = osdp_monitor_state();
+    json += ",\"bus\":{\"frames\":" + String(mon->frames_seen) +
+            ",\"bad_frames\":" + String(mon->frames_bad) + "}";
+
+    json += ",\"peers\":[";
+    bool first_peer = true;
+    for (int i = 0; i < OSDP_MONITOR_MAX_PEERS; i++) {
+      const osdp_peer_state *p = &mon->peers[i];
+      if (!p->in_use) continue;
+      if (!first_peer) json += ",";
+      first_peer = false;
+      json += "{\"address\":" + String(p->address);
+      json += ",\"secure\":" + String(p->saw_secure_data ? "true" : "false");
+      json += ",\"handshake\":" + String(p->saw_handshake ? "true" : "false");
+      json += ",\"cleartext_frames\":" + String(p->cleartext_frames);
+      json += ",\"cleartext_card_reads\":" + String(p->cleartext_card_reads);
+      json += ",\"crypto_advertised\":" +
+              String(p->cap_known ? (p->cap_supports_crypto ? "true" : "false")
+                                  : "null");
+      json += ",\"key_recovered\":" +
+              String(p->key_recovered ? "true" : "false");
+      json += "}";
+    }
+    json += "]";
+#else
+    json += ",\"bus\":null,\"peers\":[]";
+#endif
+
+    json += ",\"findings\":";
+    json += findings;
     json += "}\n";
     server.send(200, "application/json", json);
   });

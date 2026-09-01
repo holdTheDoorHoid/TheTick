@@ -1,0 +1,104 @@
+{% with page_name="OSDP Assessment", menu_item="osdp" %}
+{% include "includes/header.html.j2" %}
+{% endwith %}
+                <!-- Begin Page Content -->
+                <div class="container-fluid">
+
+                    <h1 class="h3 mb-2 text-gray-800">OSDP assessment</h1>
+                    <p class="mb-4 text-gray-600">
+                        Findings observed on the bus this device is attached to.
+                        Each one records what was seen, when it was first seen,
+                        how often, and the observed value that proves it.
+                    </p>
+
+                    <div id="verdict" class="mb-4"></div>
+
+                    <div class="row">
+                        <div class="col-xl-3 col-md-6 mb-4">
+                            <div class="card border-left-primary shadow h-100 py-2">
+                                <div class="card-body">
+                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Frames observed</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat_frames">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6 mb-4">
+                            <div class="card border-left-primary shadow h-100 py-2">
+                                <div class="card-body">
+                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Failed integrity check</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat_bad">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6 mb-4">
+                            <div class="card border-left-primary shadow h-100 py-2">
+                                <div class="card-body">
+                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Peripherals seen</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat_peers">-</div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="col-xl-3 col-md-6 mb-4">
+                            <div class="card border-left-primary shadow h-100 py-2">
+                                <div class="card-body">
+                                    <div class="text-xs font-weight-bold text-primary text-uppercase mb-1">Findings</div>
+                                    <div class="h5 mb-0 font-weight-bold text-gray-800" id="stat_findings">-</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3 d-flex justify-content-between align-items-center">
+                            <h6 class="m-0 font-weight-bold text-primary">Findings</h6>
+                            <button class="btn btn-sm btn-primary" id="download_report">Download report</button>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered" width="100%" cellspacing="0">
+                                    <thead>
+                                        <tr>
+                                            <th>Severity</th>
+                                            <th>Finding</th>
+                                            <th>What it means</th>
+                                            <th>Address</th>
+                                            <th>Evidence</th>
+                                            <th>Seen</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="findings_body">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card shadow mb-4">
+                        <div class="card-header py-3">
+                            <h6 class="m-0 font-weight-bold text-primary">Peripherals on the bus</h6>
+                        </div>
+                        <div class="card-body">
+                            <div class="table-responsive">
+                                <table class="table table-bordered" width="100%" cellspacing="0">
+                                    <thead>
+                                        <tr>
+                                            <th>Address</th>
+                                            <th>Secure channel</th>
+                                            <th>Advertises encryption</th>
+                                            <th>Cleartext frames</th>
+                                            <th>Credentials in the clear</th>
+                                            <th>Key recovered</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="peers_body">
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+
+                </div>
+                <!-- /.container-fluid -->
+{% with page_scripts=["page-osdp.js"] %}
+{% include "includes/footer.html.j2" %}
+{%- endwith -%}

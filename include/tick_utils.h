@@ -33,4 +33,8 @@ extern String dhcp_hostname;
 
 int getBootCount();
 
+// Record a finding against the device's evidence store, timestamped now.
+void tick_record_finding(const char *name, const char *detail, int severity,
+                         bool has_address, uint8_t address);
+
 #endif

@@ -172,6 +172,14 @@ size_t osdp_monitor_feed_bytes(osdp_monitor *mon, const uint8_t *buf,
 // without losing the counts.
 void osdp_monitor_rearm(osdp_monitor *mon);
 
+// Look up a tracked peripheral, or null. Used to pull the evidence - a
+// recovered key, for instance - that belongs with a reported finding.
+const osdp_peer_state *osdp_monitor_peer(const osdp_monitor *mon,
+                                         uint8_t address);
+
+// Severity to file a given threat under, so the report ranks itself.
+int osdp_threat_severity(osdp_threat threat);
+
 const char *osdp_threat_name(osdp_threat threat);
 const char *osdp_threat_description(osdp_threat threat);
 

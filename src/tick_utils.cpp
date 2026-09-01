@@ -16,6 +16,7 @@
 #include <Preferences.h>
 
 #include "tick_board.h"
+#include "tick_findings.h"
 #include "tick_utils.h"
 
 int boot_count = 0;
@@ -63,6 +64,12 @@ int getBootCount() {
   if(boot_count == 0)
     incrementBootCount();
   return boot_count;
+}
+
+void tick_record_finding(const char *name, const char *detail, int severity,
+                         bool has_address, uint8_t address) {
+  tick_finding_record(&tick_global_findings, name, detail,
+                      (tick_severity)severity, has_address, address, millis());
 }
 
 String dhcp_hostname;

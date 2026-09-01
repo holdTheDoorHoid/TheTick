@@ -18,6 +18,7 @@
 #include <Arduino.h>
 
 #include "tick_board.h"
+#include "tick_findings.h"
 #include "tick_default_config.h"
 #include "tick_osdp.h"
 #include "tick_osdp_monitor.h"
@@ -50,10 +51,32 @@ static size_t carry_len = 0;
 static void report_threat(const osdp_threat_report *report, void *context) {
   (void)context;
 
-  String line = String(osdp_threat_name(report->threat)) + " addr=" +
-                String(report->address) + " frame=0x" +
-                String(report->frame_id, HEX);
-  append_log("osdp_threat", line);
+  // Attach the evidence that makes the finding checkable by someone who was
+  // not standing next to the bus. For a recovered key that is the key itself.
+  char detail[TICK_FINDING_DETAIL_LEN];
+  detail[0] = '\0';
+
+  if (report->threat == OSDP_THREAT_WEAK_KEY ||
+      report->threat == OSDP_THREAT_DEFAULT_KEY) {
+    const osdp_peer_state *peer = osdp_monitor_peer(&monitor, report->address);
+    if (peer != NULL && peer->key_recovered) {
+      for (int i = 0; i < OSDP_KEY_LEN; i++) {
+        detail[i * 2] = c2h((unsigned char)(peer->recovered_key[i] >> 4));
+        detail[i * 2 + 1] = c2h((unsigned char)(peer->recovered_key[i] & 0x0F));
+      }
+      detail[OSDP_KEY_LEN * 2] = '\0';
+    }
+  } else {
+    snprintf(detail, sizeof(detail), "frame 0x%02X %s", report->frame_id,
+             osdp_threat_name(report->threat));
+  }
+
+  tick_record_finding(osdp_threat_name(report->threat), detail,
+                      osdp_threat_severity(report->threat), true,
+                      report->address);
+
+  append_log("osdp_threat", String(osdp_threat_name(report->threat)) +
+                                " addr=" + String(report->address));
   output_debug_string(String("OSDP: ") + osdp_threat_name(report->threat));
 }
 
